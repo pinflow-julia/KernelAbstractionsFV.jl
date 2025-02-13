@@ -179,6 +179,7 @@ function update_rhs!(semi)
     (; grid, equations, surface_flux, solver, cache) = semi
     (; nx, dx, xf) = grid
     (; u, Fn, res) = cache
+    # TODO: Is 256 an optimal workgroup size?
     update_rhs_kernel!(get_backend(u),256)(Fn, res, equations, solver, dx; ndrange = nx)
 end
 
@@ -194,7 +195,7 @@ function compute_surface_fluxes!(semi)
     (; grid, equations, surface_flux, solver, cache) = semi
     (; nx, dx, xf) = grid
     (; u, Fn, res) = cache
-
+    # TODO: Is 256 an optimal workgroup size?
     compute_surface_fluxes_kernel!(get_backend(u), 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
 
 end
