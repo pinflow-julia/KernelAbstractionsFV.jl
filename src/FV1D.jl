@@ -68,7 +68,7 @@ function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
     # TODO - dt is a vector to allow mutability. Is that necessary?
     dt = allocate(backend_kernel, RealT, 1)
 
-    cache = (; u, res, Fn, dt)
+    cache = (; u, res, Fn, dt, backend_kernel)
 
     return cache
 end
