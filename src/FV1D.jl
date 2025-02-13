@@ -163,6 +163,34 @@ function compute_error(semi, t)
 end
 
 """
+    compute_surface_flux!(semi)
+
+Compute the numerical flux at all faces.
+"""
+
+@kernel function compute_surface_flux_kernel!(semi)
+    i, = @index(Global, NTuple)
+    (; equations, surface_flux, solver, cache) = semi
+    (; u, Fn) = cache
+    # loop over faces
+    ul, ur = get_node_vars(u, equations, solver, i-1), get_node_vars(u, equations, solver, i)
+    Fn[:, i] .= surface_flux(ul, ur, 1, equations)
+end
+
+function compute_surface_flux!(
+    semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}
+    )
+    (; grid, equations, surface_flux, solver, cache) = semi
+    (; nx) = grid
+    (; u, Fn) = cache
+    # loop over faces
+    for i=1:nx+1
+        ul, ur = get_node_vars(u, equations, solver, i-1), get_node_vars(u, equations, solver, i)
+        Fn[:, i] .= surface_flux(ul, ur, 1, equations)
+    end
+end
+
+"""
     compute_residual!(semi)
 
 Compute the residual of the solution.
@@ -173,12 +201,11 @@ function compute_residual!(
     )
    (; grid, equations, surface_flux, solver, cache) = semi
    (; nx, dx, xf) = grid
-   (; u, Fn, res) = cache
+   (; Fn, res) = cache
    # loop over faces
-   for i=1:nx+1
-       ul, ur = get_node_vars(u, equations, solver, i-1), get_node_vars(u, equations, solver, i)
-       Fn[:, i] .= surface_flux(ul, ur, 1, equations)
-   end
+    (; backend_kernel) = cache
+    kernel! = compute_surface_flux_kernel!(backend_kernel)
+    kernel!(semi, ndrange = (nx+1,))
 
    # loop over elements
    for i=1:nx
