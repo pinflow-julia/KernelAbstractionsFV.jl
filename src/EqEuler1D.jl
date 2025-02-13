@@ -19,7 +19,7 @@ function flux(u, orientation::Integer, equations::Euler1D)
     rho, rho_v1, E = u
     v1 = rho_v1 / rho
     p = (equations.gamma - 1) * (E - 0.5f0*rho*v1^2)
-    return (rho_v1, rho*v1^2 + p, (E + p)*v1)
+    return SVector(rho_v1, rho*v1^2 + p, (E + p)*v1)
 end
 
 """
@@ -72,6 +72,7 @@ the eigen values of the flux.
 """
 @inline function max_abs_speeds(u, equations::Euler1D)
     rho, u, p = cons2prim(u, equations)
+    (; gamma) = equations
 
     c = sqrt(gamma*p/rho) # sound speed
     return abs(u) + c # local wave speed

@@ -25,7 +25,7 @@ struct CartesianGrid1D{RealT <: Real}
     nx::Int                  # nx - number of points
     xc::Array{RealT, 1}      # cell centers
     xf::Array{RealT, 1}      # cell faces
-    dx::Array{RealT, 1}      # cell sizes
+    dx::OffsetVector{RealT}      # cell sizes
 end
 
 """
@@ -86,7 +86,7 @@ function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, para
     max_speed = zero(eltype(u))
     for i in 1:grid.nx
         u_node = get_node_vars(u, equations, solver, i)
-        max_speed = max(max_abs_speeds(u_node, equations), max_speed) / dx[i]
+        max_speed = max(max_abs_speeds(u_node, equations) / dx[i], max_speed)
     end
 
     # Compute the time step
@@ -144,13 +144,13 @@ end
 Compute the error of the solution.
 """
 function compute_error(semi, t)
-    (; grid, equation, initial_condition, cache) = semi
+    (; grid, equations, initial_condition, cache) = semi
     (; u) = cache
     error_l2, error_l1, error_linf = (zero(eltype(u)) for _=1:3)
     (; nx, dx, xc) = grid
     for i=1:nx
        u_   = u[1, i]
-       u_exact = initial_condition(xc[i], t, equation)
+       u_exact = initial_condition(xc[i], t, equations)
        error = abs(u_ - u_exact[1])
        error_l1 += error   * dx[i]
        error_l2 += error^2 * dx[i]
@@ -164,16 +164,18 @@ end
     compute_residual!(semi)
 
 Compute the residual of the solution.
-"""
-function compute_residual!(semi::SemidiscretizationHyperbolic{<:CartesianGrid1D})
-   (; grid, equations, cache) = semi
-   (; dx, xf) = grid
+""" # TODO - Dispatch for 1D!
+function compute_residual!(
+    # semi::SemidiscretizationHyperbolic{<:CartesianGrid1D}
+    semi
+    )
+   (; grid, equations, surface_flux, solver, cache) = semi
+   (; nx, dx, xf) = grid
    (; u, res) = cache
-   @unpack numflux = scheme
    # loop over faces
    for i=1:nx+1
-      ul, ur = get_node_vars(u, equations, i-1), get_node_vars(u, equations, i)
-      F = numflux(equations, lam, ul, ur, xf[i], Uf)
+      ul, ur = get_node_vars(u, equations, solver, i-1), get_node_vars(u, equations, solver, i)
+      F = surface_flux(ul, ur, 1, equations)
       res[:, i-1] .+= F/ dx[i-1]
       res[:, i]   .-= F/ dx[i]
    end

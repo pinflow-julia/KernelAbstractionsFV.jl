@@ -61,9 +61,11 @@ struct PeriodicBC <: AbstractBoundaryCondition end
 Struct containing everything about the spatial discretization, and the cache
 used throughout the simulation.
 """
-struct SemiDiscretizationHyperbolic{Grid, Equations <: AbstractEquations, IC, BC, Solver, Cache}
+struct SemiDiscretizationHyperbolic{Grid, Equations <: AbstractEquations, SurfaceFlux, IC, BC,
+                                    Solver, Cache}
     grid::Grid
     equations::Equations
+    surface_flux::SurfaceFlux
     initial_condition::IC
     boundary_conditions::BC
     solver::Solver
@@ -76,14 +78,14 @@ end
 Constructor for the SemiDiscretizationHyperbolic struct to ensure periodic boundary conditions
 are used by default.
 """
-function SemiDiscretizationHyperbolic(grid, equations, initial_condition;
+function SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition;
     solver = FiniteVolumeSolver(),
     boundary_conditions = BoundaryConditions(PeriodicBC(), PeriodicBC()), cache = (;))
 
-    cache = (cache..., create_cache(equations, grid)...)
-    set_initial_value!(cache, grid, equations, initial_value)
-    SemiDiscretizationHyperbolic(grid, equations, initial_condition, boundary_conditions, solver,
-                                 cache)
+    cache = (;cache..., create_cache(equations, grid)...)
+    set_initial_value!(cache, grid, equations, initial_condition)
+    SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition,
+                                 boundary_conditions, solver, cache)
 end
 
 """
@@ -115,6 +117,7 @@ function adjust_time_step(ode, param, t)
    # Adjust to reach final time exactly
    final_time = ode.tspan[2]
    (; save_time_interval) = param
+    (; dt) = ode.semi.cache
    if t + dt[1] > final_time
       dt[1] = final_time - t
       return nothing
@@ -152,9 +155,9 @@ end
 Solve the conservation law.
 """
 function solve(ode::ODE, param::Parameters)
-    tick()
     (; semi, tspan) = ode
     (; grid, cache, boundary_conditions) = semi
+    (; dt) = cache
     Tf = tspan[2]
 
     it, t = 0, 0.0
@@ -165,12 +168,12 @@ function solve(ode::ODE, param::Parameters)
        update_ghost_values!(cache, grid, boundary_conditions)
        update_solution!(semi)
 
+       @show l1, l2, linf
        t += dt[1]; it += 1
        @show t, dt, it
     end
     l1, l2, linf = compute_error(semi, t)
 
-    tock()
     sol = (; cache.u, semi, l1, l2, linf)
     return sol
 end
