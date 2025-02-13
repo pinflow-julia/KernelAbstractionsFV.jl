@@ -86,7 +86,7 @@ function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, para
     max_speed = zero(eltype(u))
     for i in 1:grid.nx
         u_node = get_node_vars(u, equations, solver, i)
-        max_speed = max(max_abs_speeds(u_node, equations) / dx[i], max_speed)
+        max_speed = max(max_abs_speeds(u_node, equations)[1] / dx[i], max_speed)
     end
 
     # Compute the time step
