@@ -190,6 +190,15 @@ function compute_surface_flux!(
     end
 end
 
+@kernel function add_flux_to_residual!(semi)
+    i, = @index(Global, NTuple)
+    (; cache, grid) = semi
+    (; res, Fn) = cache
+    (; dx) = grid
+    # loop over elements
+    res[:, i] .+= (Fn[:, i+1] - Fn[:, i])/ dx[i]
+end
+
 """
     compute_residual!(semi)
 
@@ -204,13 +213,9 @@ function compute_residual!(
    (; Fn, res) = cache
    # loop over faces
     (; backend_kernel) = cache
-    kernel! = compute_surface_flux_kernel!(backend_kernel)
-    kernel!(semi, ndrange = (nx+1,))
+    kernel_surface_flux! = compute_surface_flux_kernel!(backend_kernel)
+    kernel_surface_flux!(semi, ndrange = (nx+1,))
 
-   # loop over elements
-   for i=1:nx
-      fn_rr = get_node_vars(Fn, equations, solver, i+1)
-      fn_ll = get_node_vars(Fn, equations, solver, i)
-      res[:, i] .+= (fn_rr - fn_ll)/ dx[i]
-   end
+    kernel_add_flux! = add_flux_to_residual!(backend_kernel)
+    kernel_add_flux!(semi, ndrange = (nx,))
 end
