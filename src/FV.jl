@@ -1,25 +1,59 @@
 using Trixi: AbstractEquations
 
+import Trixi: get_node_vars
+
+"""
+    AbstractSpatialSolver
+
+Abstract type for solvers that specify the spatial discretization.
+"""
+abstract type AbstractSpatialSolver end
+
+"""
+    AbstractFiniteVolumeSolver
+
+Finite volume spatial discretization.
+"""
+struct FiniteVolumeSolver <: AbstractSpatialSolver end
+
+
+"""
+    AbstractBoundaryCondition
+
+Abstract type for boundary conditions.
+"""
+abstract type AbstractBoundaryCondition end
+
+"""
+    get_node_vars(u, equations, solver, indices...)
+
+Get the conservative variables specified indices as an SVector.
+"""
+@inline function get_node_vars(u, equations, solver::AbstractSpatialSolver, indices...)
+    # Copied from Trixi.jl
+    SVector(ntuple(@inline(v->u[v, indices...]), Val(nvariables(equations))))
+end
+
 """
     InflowBC
 
 Specifies inflow boundary condition.
 """
-struct InflowBC end
+struct InflowBC <: AbstractBoundaryCondition end
 
 """
     OutflowBC
 
 Specifies outflow boundary condition.
 """
-struct OutflowBC end
+struct OutflowBC <: AbstractBoundaryCondition end
 
 """
     PeriodicBC
 
 Specifies periodic boundary condition.
 """
-struct PeriodicBC end
+struct PeriodicBC <: AbstractBoundaryCondition end
 
 """
     SemiDiscretizationHyperbolic
@@ -27,11 +61,12 @@ struct PeriodicBC end
 Struct containing everything about the spatial discretization, and the cache
 used throughout the simulation.
 """
-struct SemiDiscretizationHyperbolic{Grid, Equations <: AbstractEquations, IC, BC, Cache}
+struct SemiDiscretizationHyperbolic{Grid, Equations <: AbstractEquations, IC, BC, Solver, Cache}
     grid::Grid
     equations::Equations
     initial_condition::IC
     boundary_conditions::BC
+    solver::Solver
     cache::Cache
 end
 
@@ -41,11 +76,14 @@ end
 Constructor for the SemiDiscretizationHyperbolic struct to ensure periodic boundary conditions
 are used by default.
 """
-function SemiDiscretizationHyperbolic(grid, equations, initial_condition,
+function SemiDiscretizationHyperbolic(grid, equations, initial_condition;
+    solver = FiniteVolumeSolver(),
     boundary_conditions = BoundaryConditions(PeriodicBC(), PeriodicBC()), cache = (;))
 
     cache = (cache..., create_cache(equations, grid)...)
-    SemiDiscretizationHyperbolic(grid, equations, initial_condition, boundary_conditions, cache)
+    set_initial_value!(cache, grid, equations, initial_value)
+    SemiDiscretizationHyperbolic(grid, equations, initial_condition, boundary_conditions, solver,
+                                 cache)
 end
 
 """
@@ -93,6 +131,48 @@ function adjust_time_step(ode, param, t)
       end
    end
    return nothing
+end
+
+"""
+    update_solution!(semi, dt)
+
+Update the solution using the explicit method.
+"""
+function update_solution!(semi)
+    (; cache) = semi
+    (; u, res, dt) = cache
+    res .= 0.0
+    compute_residual!(semi)
+    @. u -= dt[1]*res
+end
+
+"""
+    solve(ode, param)
+
+Solve the conservation law.
+"""
+function solve(ode::ODE, param::Parameters)
+    tick()
+    (; semi, tspan) = ode
+    (; grid, cache, boundary_conditions) = semi
+    Tf = tspan[2]
+
+    it, t = 0, 0.0
+    while t < Tf
+       l1, l2, linf = compute_error(semi, t)
+       compute_dt!(semi, param)
+       adjust_time_step(ode, param, t)
+       update_ghost_values!(cache, grid, boundary_conditions)
+       update_solution!(semi)
+
+       t += dt[1]; it += 1
+       @show t, dt, it
+    end
+    l1, l2, linf = compute_error(semi, t)
+
+    tock()
+    sol = (; cache.u, semi, l1, l2, linf)
+    return sol
 end
 
 include("FV1D.jl")

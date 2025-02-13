@@ -1,4 +1,4 @@
-import Trixi: varnames, prim2cons, cons2prim, cons2cons
+import Trixi: varnames, prim2cons, cons2prim, cons2cons, max_abs_speeds, flux
 using Trixi: nvariables
 
 """
@@ -8,6 +8,18 @@ using Trixi: nvariables
 """
 struct Euler1D{RealT <: Real} <: AbstractEquations{1, 3}
     gamma::RealT
+end
+
+"""
+    flux(u, orientation::Integer, equations::Euler1D)
+
+Compute the flux for the Euler1D equations.
+"""
+function flux(u, orientation::Integer, equations::Euler1D)
+    rho, rho_v1, E = u
+    v1 = rho_v1 / rho
+    p = (equations.gamma - 1) * (E - 0.5f0*rho*v1^2)
+    return (rho_v1, rho*v1^2 + p, (E + p)*v1)
 end
 
 """
@@ -52,3 +64,28 @@ function cons2cons(u, equations::Euler1D)
     return u
 end
 
+"""
+    max_abs_speeds(u, equation::Euler1D)
+
+Compute the maximum absolute wave speeds for the Euler1D equations, which are
+the eigen values of the flux.
+"""
+@inline function max_abs_speeds(u, equations::Euler1D)
+    rho, u, p = cons2prim(u, equations)
+
+    c = sqrt(gamma*p/rho) # sound speed
+    return abs(u) + c # local wave speed
+end
+
+"""
+    flux_rusanov(u_ll, u_rr, orientation::Integer, equations::Euler1D)
+
+Compute the Rusanov flux for the Euler1D equations.
+"""
+function flux_rusanov(u_ll, u_rr, orientation::Integer, equations)
+    lamba_l = max_abs_speeds(u_ll, equations)
+    lamba_r = max_abs_speeds(u_rr, equations)
+    lamba = max(lamba_l, lamba_r)
+    f_ll, f_rr = flux(u_ll, orientation, equations), flux(u_rr, orientation, equations)
+    return 0.5 * (f_ll + f_rr - lamba * (u_rr - u_ll))
+end
