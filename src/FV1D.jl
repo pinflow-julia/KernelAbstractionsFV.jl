@@ -62,11 +62,12 @@ function create_cache(equations, grid::CartesianGrid1D)
 
     u = OffsetArray(zeros(RealT, nvar, nx+2), OffsetArrays.Origin(1, 0))
     res = copy(u) # dU/dt + res(U) = 0
+    Fn = copy(u) # numerical flux
 
     # TODO - dt is a vector to allow mutability. Is that necessary?
     dt = Vector{RealT}(undef, 1)
 
-    cache = (; u, res, dt)
+    cache = (; u, res, Fn, dt)
 
     return cache
 end
@@ -171,13 +172,18 @@ function compute_residual!(
     )
    (; grid, equations, surface_flux, solver, cache) = semi
    (; nx, dx, xf) = grid
-   (; u, res) = cache
+   (; u, Fn, res) = cache
    # loop over faces
    for i=1:nx+1
-      ul, ur = get_node_vars(u, equations, solver, i-1), get_node_vars(u, equations, solver, i)
-      F = surface_flux(ul, ur, 1, equations)
-      res[:, i-1] .+= F/ dx[i-1]
-      res[:, i]   .-= F/ dx[i]
+       ul, ur = get_node_vars(u, equations, solver, i-1), get_node_vars(u, equations, solver, i)
+       Fn[:, i] .= surface_flux(ul, ur, 1, equations)
+   end
+
+   # loop over elements
+   for i=1:nx
+      fn_rr = get_node_vars(Fn, equations, solver, i+1)
+      fn_ll = get_node_vars(Fn, equations, solver, i)
+      res[:, i] .+= (fn_rr - fn_ll)/ dx[i]
    end
 end
 
