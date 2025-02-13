@@ -2,12 +2,13 @@ module KernelAbstractionsFV
 
 using Trixi
 using OffsetArrays
-using UnPack
 using StaticArrays
 using Printf
 
 include("FV.jl")
 
-export make_grid
+include("EqEuler1D.jl")
+
+export make_grid, Euler1D, prim2cons, SemiDiscretizationHyperbolic
 
 end # module KernelAbstractionsFV
