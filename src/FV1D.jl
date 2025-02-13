@@ -165,7 +165,7 @@ end
     compute_residual!(semi)
 
 Compute the residual of the solution.
-""" # TODO - Dispatch for 1D!
+""" # TODO - Dispatch for 1D. The fact that it doesn't work indicates a bug in julia.
 function compute_residual!(
     # semi::SemidiscretizationHyperbolic{<:CartesianGrid1D}
     semi
@@ -186,4 +186,3 @@ function compute_residual!(
       res[:, i] .+= (fn_rr - fn_ll)/ dx[i]
    end
 end
-
