@@ -179,10 +179,7 @@ function update_rhs!(semi)
     (; grid, equations, surface_flux, solver, cache) = semi
     (; nx, dx, xf) = grid
     (; u, Fn, res) = cache
-    backend = get_backend(u)
-    kernel! = update_rhs_kernel!(backend, 256)
-    kernel!(Fn, res, equations, solver, dx; ndrange = nx)
-
+    update_rhs_kernel!(get_backend(u),256)(Fn, res, equations, solver, dx; ndrange = nx)
 end
 
 @kernel function update_rhs_kernel!(Fn, res, equations, solver, dx)
@@ -198,10 +195,8 @@ function compute_surface_fluxes!(semi)
     (; nx, dx, xf) = grid
     (; u, Fn, res) = cache
 
-    backend = get_backend(u)
-    kernel! = compute_surface_fluxes_kernel!(backend, 256)
+    compute_surface_fluxes_kernel!(get_backend(u), 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
 
-    kernel!(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
 end
 
 @kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux)
