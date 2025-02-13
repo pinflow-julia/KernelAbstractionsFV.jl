@@ -54,18 +54,19 @@ end
 
 Struct containing everything about the spatial discretization.
 """
-function create_cache(equations, grid::CartesianGrid1D)
+function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
     nvar = nvariables(equations)
     nx = grid.nx
     RealT = eltype(grid.xc)
     # Allocating variables
 
-    u = OffsetArray(zeros(RealT, nvar, nx+2), OffsetArrays.Origin(1, 0))
+    u_ = allocate(backend_kernel, RealT, nvar, nx+2)
+    u = OffsetArray(u_, OffsetArrays.Origin(1, 0))
     res = copy(u) # dU/dt + res(U) = 0
     Fn = copy(u) # numerical flux
 
     # TODO - dt is a vector to allow mutability. Is that necessary?
-    dt = Vector{RealT}(undef, 1)
+    dt = allocate(backend_kernel, RealT, 1)
 
     cache = (; u, res, Fn, dt)
 
