@@ -4,6 +4,7 @@ using Trixi
 using OffsetArrays
 using StaticArrays
 using Printf
+using KernelAbstractions
 
 include("FV.jl")
 
