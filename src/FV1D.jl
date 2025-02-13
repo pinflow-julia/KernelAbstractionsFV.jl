@@ -1,3 +1,4 @@
+using KernelAbstractions
 """
     BoundaryConditions
 
@@ -167,23 +168,41 @@ end
 
 Compute the residual of the solution.
 """ # TODO - Dispatch for 1D. The fact that it doesn't work indicates a bug in julia.
-function compute_residual!(
-    # semi::SemidiscretizationHyperbolic{<:CartesianGrid1D}
-    semi
-    )
-   (; grid, equations, surface_flux, solver, cache) = semi
-   (; nx, dx, xf) = grid
-   (; u, Fn, res) = cache
-   # loop over faces
-   for i=1:nx+1
-       ul, ur = get_node_vars(u, equations, solver, i-1), get_node_vars(u, equations, solver, i)
-       Fn[:, i] .= surface_flux(ul, ur, 1, equations)
-   end
+function compute_residual!(semi)
+   
+    compute_surface_fluxes!(semi)
+    update_rhs!(semi)
 
-   # loop over elements
-   for i=1:nx
-      fn_rr = get_node_vars(Fn, equations, solver, i+1)
-      fn_ll = get_node_vars(Fn, equations, solver, i)
-      res[:, i] .+= (fn_rr - fn_ll)/ dx[i]
-   end
+end
+
+function update_rhs!(semi)
+
+    (; grid, equations, surface_flux, solver, cache) = semi
+    (; nx, dx, xf) = grid
+    (; u, Fn, res) = cache
+    # TODO: Is 256 an optimal workgroup size?
+    update_rhs_kernel!(get_backend(u),256)(Fn, res, equations, solver, dx; ndrange = nx)
+end
+
+@kernel function update_rhs_kernel!(Fn, res, equations, solver, dx)
+    i = @index(Global, Linear)
+        fn_rr = get_node_vars(Fn, equations, solver, i+1)
+        fn_ll = get_node_vars(Fn, equations, solver, i)
+        res[:, i] .+= (fn_rr - fn_ll)/ dx[i]
+end
+
+function compute_surface_fluxes!(semi)
+
+    (; grid, equations, surface_flux, solver, cache) = semi
+    (; nx, dx, xf) = grid
+    (; u, Fn, res) = cache
+    # TODO: Is 256 an optimal workgroup size?
+    compute_surface_fluxes_kernel!(get_backend(u), 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
+
+end
+
+@kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux)
+    i = @index(Global, Linear)
+        ul, ur = get_node_vars(u, equations, solver, i-1), get_node_vars(u, equations, solver, i)
+        Fn[:, i] .= surface_flux(ul, ur, 1, equations)
 end
