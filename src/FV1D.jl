@@ -63,14 +63,15 @@ function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
     nx = grid.nx
     RealT = eltype(grid.xc)
     # Allocating variables
-    u = allocate(backend_kernel, RealT, nvar, nx+2)
-    #u = OffsetArray(u_, OffsetArrays.Origin(1, 0))
+
+    u_ = allocate(backend_kernel, RealT, nvar, nx+2)
+    u = OffsetArray(u_, OffsetArrays.Origin(1, 0))
     res = copy(u) # dU/dt + res(U) = 0
     Fn = copy(u) # numerical flux
 
     # TODO - dt is a vector to allow mutability. Is that necessary?
-    #dt = allocate(backend_kernel, RealT, 1)
-    dt = Vector{RealT}(undef, 1)
+    dt = allocate(backend_kernel, RealT, 1)
+
     cache = (; u, res, Fn, dt, backend_kernel)
 
     return cache
@@ -201,20 +202,15 @@ function update_rhs!(semi)
     (; grid, equations, surface_flux, solver, cache) = semi
     (; nx, dx, xf) = grid
     (; u, Fn, res) = cache
-
-    nx = grid.nx
-    backend = get_backend(u)
-
-    update_rhs_kernel!(backend)(res, Fn, dx, equations, solver; ndrange = nx)
-    synchronize(backend)
-
+    # TODO: Is 256 an optimal workgroup size?
+    update_rhs_kernel!(get_backend(u),256)(Fn, res, equations, solver, dx; ndrange = nx)
 end
 
-@kernel function update_rhs_kernel!(res, Fn, dx, equations, solver)
+@kernel function update_rhs_kernel!(Fn, res, equations, solver, dx)
     i = @index(Global, Linear)
-    for k = 1:3
-        res[k,i+1] += (Fn[k,i+2] - Fn[k,i+1])/dx[i]
-    end
+        fn_rr = get_node_vars(Fn, equations, solver, i+1)
+        fn_ll = get_node_vars(Fn, equations, solver, i)
+        res[:, i] .+= (fn_rr - fn_ll)/ dx[i]
 end
 
 function compute_surface_fluxes!(semi)
@@ -223,16 +219,12 @@ function compute_surface_fluxes!(semi)
     (; nx, dx, xf) = grid
     (; u, Fn, res) = cache
     # TODO: Is 256 an optimal workgroup size?
-    backend = get_backend(u)
-    compute_surface_fluxes_kernel!(backend)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
-    synchronize(backend)
+    compute_surface_fluxes_kernel!(get_backend(u), 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
+
 end
 
 @kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux)
     i = @index(Global, Linear)
-        ul, ur = get_node_vars(u, equations, solver, i), get_node_vars(u, equations, solver, i+1)
-        flux = surface_flux(ul, ur, 1, equations)
-        for k = 1:3
-        Fn[k, i+1] = flux[k] 
-        end
+        ul, ur = get_node_vars(u, equations, solver, i-1), get_node_vars(u, equations, solver, i)
+        Fn[:, i] .= surface_flux(ul, ur, 1, equations)
 end

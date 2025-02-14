@@ -80,9 +80,11 @@ are used by default.
 """
 function SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition;
     solver = FiniteVolumeSolver(),
-    boundary_conditions = BoundaryConditions(PeriodicBC(), PeriodicBC()), cache = (;))
+    boundary_conditions = BoundaryConditions(PeriodicBC(), PeriodicBC()),
+    backend_kernel = KernelAbstractions.CPU(),
+    cache = (;))
 
-    cache = (;cache..., create_cache(equations, grid)...)
+    cache = (;cache..., create_cache(equations, grid, backend_kernel)...)
     set_initial_value!(cache, grid, equations, initial_condition)
     SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition,
                                  boundary_conditions, solver, cache)
