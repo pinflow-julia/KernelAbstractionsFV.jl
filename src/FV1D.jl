@@ -21,12 +21,12 @@ end
 
 Struct containing the 1-D Cartesian grid information.
 """
-struct CartesianGrid1D{RealT <: Real}
+struct CartesianGrid1D{RealT <: Real, ArrayType1, ArrayType2}
     domain::Tuple{RealT,RealT}  # xmin, xmax
     nx::Int                  # nx - number of points
-    xc::Array{RealT, 1}      # cell centers
-    xf::Array{RealT, 1}      # cell faces
-    dx::OffsetVector{RealT}      # cell sizes
+    xc::ArrayType1      # cell centers
+    xf::ArrayType1      # cell faces
+    dx::ArrayType2      # cell sizes (TODO - This was for offset array)
 end
 
 @kernel function linrange_kernel(start, stop, arr)
@@ -61,9 +61,10 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
     @printf("   dx                            = %e\n", dx1)
     dx_ = dx1 .* KernelAbstractions.ones(backend_kernel, RealT, nx+2)
-    dx = OffsetArray(dx_, OffsetArrays.Origin(0))
+    dx = OffsetArray(dx_, OffsetArrays.Origin(0)) # TODO - This doesn't work with GPU
+    # dx = dx_
     xf = gpu_linrange(xmin, xmax, nx+1, RealT, backend_kernel)
-    return CartesianGrid1D(domain, nx, collect(xc), collect(xf), dx)
+    return CartesianGrid1D(domain, nx, xc, xf, dx)
 end
 
 """
