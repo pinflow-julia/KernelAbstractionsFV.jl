@@ -242,9 +242,8 @@ end
 @kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux)
     i = @index(Global, Linear)
 
-    # TODO - Fix the names of ul, ur!!!
-    ur = get_node_vars(u, equations, solver, i)
-    ul = get_node_vars(u, equations, solver, i+1)
+    ul = get_node_vars(u, equations, solver, i)
+    ur = get_node_vars(u, equations, solver, i+1)
     fn = surface_flux(ul, ur, 1, equations)
     Fn[:, i] .= fn
 end
@@ -253,7 +252,6 @@ end
     Fn, u, equations::Union{CompressibleEulerEquations1D, Euler1D}, solver, surface_flux)
     i = @index(Global, Linear)
 
-    # TODO - Fix the names of ul, ur!!!
     ur = SVector(u[1, i+1], u[2, i+1], u[3, i+1])
     ul = SVector(u[1, i], u[2, i], u[3, i])
     fn = surface_flux(ul, ur, 1, equations)
