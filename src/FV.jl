@@ -161,11 +161,11 @@ function solve(ode::ODE, param::Parameters)
     (; grid, cache, boundary_conditions) = semi
     (; dt) = cache
     Tf = tspan[2]
-
+    dt[1] = 0.001
     it, t = 0, 0.0
     while t < Tf
        l1, l2, linf = compute_error(semi, t)
-       compute_dt!(semi, param)
+      # compute_dt!(semi, param)
        adjust_time_step(ode, param, t)
        update_ghost_values!(cache, grid, boundary_conditions)
        update_solution!(semi)
