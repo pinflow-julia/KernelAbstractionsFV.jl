@@ -26,23 +26,22 @@ abstract type AbstractBoundaryCondition end
 
 using GPUArraysCore
 
-"""
-    get_node_vars(u, equations, solver, indices...)
 
-Get the conservative variables specified indices as an SVector.
-"""
-# @inline function get_node_vars(u, equations, solver::AbstractSpatialSolver, indices...)
-@inline function get_node_vars(u, equations, solver::AbstractSpatialSolver, indices)
-    # Copied from Trixi.jl
-    @allowscalar SVector(ntuple(@inline(v->u[v, indices...]), Val(nvariables(equations))))
-    # return @view u[:, indices]
-end
-
-@inline function get_node_vars(u, equations::CompressibleEulerEquations1D,
-                               solver::AbstractSpatialSolver, indices)
-    # Copied from Trixi.jl
-    @allowscalar SVector(u[1, indices], u[2, indices], u[3, indices])
-    # return @view u[:, indices]
+# Returns u[:, indices...] as an SVector. size(u, 1) should thus be
+# known at compile time in the caller and passed via Val()
+# (Taken from Benedict's fork of Trixi.jl)
+@inline function get_node_vars_gpu(u, ::Val{N}, indices...) where {N}
+    # There is a cut-off at `n == 10` inside of the method
+    # `ntuple(f::F, n::Integer) where F` in Base at ntuple.jl:17
+    # in Julia `v1.5`, leading to type instabilities if
+    # more than ten variables are used. That's why we use
+    # `Val(...)` below.
+    # We use `@inline` to make sure that the `getindex` calls are
+    # really inlined, which might be the default choice of the Julia
+    # compiler for standard `Array`s but not necessarily for more
+    # advanced array types such as `PtrArray`s, cf.
+    # https://github.com/JuliaSIMD/VectorizationBase.jl/issues/55
+    SVector(ntuple(@inline(v->u[v, indices...]), N))
 end
 
 """

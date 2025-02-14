@@ -61,6 +61,7 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     println("Making uniform grid of interval [", xmin, ", ", xmax,"]")
     dx0 = (xmax - xmin)/nx
     xc = gpu_linrange(xmin-0.5f0*dx0, xmax+0.5f0*dx0, nx+2, RealT, backend_kernel) # 2 dummy elements
+    KernelAbstractions.synchronize(backend_kernel)
     xc_physical = @view xc[2:end-1]
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
@@ -69,6 +70,7 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     # dx = OffsetArray(dx_, OffsetArrays.Origin(0)) # TODO - This doesn't work with GPU
     dx = dx_
     xf = gpu_linrange(xmin-dx0, xmax+dx0, nx+3, RealT, backend_kernel)
+    KernelAbstractions.synchronize(backend_kernel)
     return CartesianGrid1D(domain, nx, xc, xc_physical, xf, dx, dx0)
 end
 
@@ -181,6 +183,7 @@ function compute_error(semi, t)
 
     set_initial_value_kernel!(backend_kernel, 256)(
         exact_array, xc_physical, equations, initial_condition, t, ndrange = nx)
+    KernelAbstractions.synchronize(backend_kernel)
     error_array .= abs.(u_physical .- exact_array) # TODO - Does this have auto-sync?
     error_l1 = sum(error_array * dx0)
     error_l2 = sqrt.(sum(error_array.^2 * dx0))
@@ -204,9 +207,10 @@ function update_rhs!(semi)
 
     (; grid, equations, surface_flux, solver, cache) = semi
     (; nx, dx, xf) = grid
-    (; u, Fn, res) = cache
+    (; u, Fn, res, backend_kernel) = cache
     # TODO: Is 256 an optimal workgroup size?
-    update_rhs_kernel!(get_backend(u),256)(Fn, res, equations, solver, dx; ndrange = nx+1)
+    update_rhs_kernel!(backend_kernel,256)(Fn, res, equations, solver, dx; ndrange = nx+1)
+    KernelAbstractions.synchronize(backend_kernel)
 end
 
 @kernel function update_rhs_kernel!(Fn, res, equations, solver, dx)
@@ -221,11 +225,10 @@ end
 @kernel function update_rhs_kernel!(Fn, res,
     equations::Union{CompressibleEulerEquations1D, Euler1D}, solver, dx)
     i = @index(Global, Linear)
-    # fn_rr = get_node_vars(Fn, equations, solver, i+1)
-    # fn_ll = get_node_vars(Fn, equations, solver, i)
 
-    fn_rr = SVector(Fn[1, i+1], Fn[2, i+1], Fn[3, i+1])
-    fn_ll = SVector(Fn[1, i], Fn[2, i], Fn[3, i])
+    nvar = Val(nvariables(equations))
+    fn_rr = get_node_vars_gpu(Fn, nvar, i+1)
+    fn_ll = get_node_vars_gpu(Fn, nvar, i)
     rhs = (fn_rr - fn_ll)/ dx[i]
     res[:, i+1] .= rhs
 end
@@ -234,9 +237,10 @@ function compute_surface_fluxes!(semi)
 
     (; grid, equations, surface_flux, solver, cache) = semi
     (; nx, dx, xf) = grid
-    (; u, Fn, res) = cache
+    (; u, Fn, res, backend_kernel) = cache
     # TODO: Is 256 an optimal workgroup size?
-    compute_surface_fluxes_kernel!(get_backend(u), 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
+    compute_surface_fluxes_kernel!(backend_kernel, 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
+    KernelAbstractions.synchronize(backend_kernel)
 end
 
 @kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux)
@@ -251,9 +255,11 @@ end
 @kernel function compute_surface_fluxes_kernel!(
     Fn, u, equations::Union{CompressibleEulerEquations1D, Euler1D}, solver, surface_flux)
     i = @index(Global, Linear)
+    nvar = Val(nvariables(equations))
 
-    ur = SVector(u[1, i+1], u[2, i+1], u[3, i+1])
-    ul = SVector(u[1, i], u[2, i], u[3, i])
+    ul = get_node_vars_gpu(u, nvar, i)
+    ur = get_node_vars_gpu(u, nvar, i+1)
+
     fn = surface_flux(ul, ur, 1, equations)
     Fn[:, i] .= fn
 end
