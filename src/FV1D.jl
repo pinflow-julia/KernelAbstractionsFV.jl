@@ -42,15 +42,15 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     RealT = eltype(domain)
     @assert xmin < xmax
     println("Making uniform grid of interval [", xmin, ", ", xmax,"]")
-    dx0 = (xmax - xmin)/nx
-    xc = LinRange(xmin+0.5f0*dx0, xmax-0.5f0*dx0, nx)
+    dx1 = (xmax - xmin)/nx
+    xc = LinRange{RealT}(xmin+0.5*dx1, xmax-0.5*dx1, nx)
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
-    @printf("   dx                            = %e\n", dx0)
-    dx_ = dx0 .* ones(nx+2)
+    @printf("   dx                            = %e\n", dx1)
+    dx_ = dx1 .* ones(RealT, nx+2)
     dx = OffsetArray(dx_, OffsetArrays.Origin(0))
-    xf = LinRange(xmin, xmax, nx+1)
-    return CartesianGrid1D(domain, nx, collect(xc), collect(xf), dx, dx0)
+    xf = LinRange{RealT}(xmin, xmax, nx+1)
+    return CartesianGrid1D(domain, nx, collect(xc), collect(xf), dx)
 end
 
 """
@@ -109,11 +109,8 @@ end
 
 Set the initial value of the solution.
 """
-function set_initial_value!(cache, grid::CartesianGrid1D, equations::AbstractEquations{1},
-                            initial_value)
-    nx = grid.nx
-    xc = grid.xc
-    (; u) = cache
+function set_initial_value!(cache, grid, equations::AbstractEquations{1}, initial_value)
+    (; nx, xc) = grid
     for i=1:nx
         u[:,i] .= initial_value(xc[i], 0.0f0, equations)
     end
