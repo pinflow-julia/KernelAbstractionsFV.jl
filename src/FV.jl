@@ -99,7 +99,7 @@ function SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_con
     # set_initial_value!(cache, grid, equations, initial_condition)
     # TODO - This works only for 1-D!
     set_initial_value_kernel!(backend_kernel)(
-        cache.u, grid.xc, equations, initial_condition; ndrange = grid.nx+2)
+        cache.u, grid.xc, equations, initial_condition, 0.0f0; ndrange = grid.nx+2)
     SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition,
                                  boundary_conditions, solver, cache)
 end

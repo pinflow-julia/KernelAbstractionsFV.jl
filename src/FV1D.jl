@@ -25,8 +25,12 @@ struct CartesianGrid1D{RealT <: Real, ArrayType1, ArrayType2}
     domain::Tuple{RealT,RealT}  # xmin, xmax
     nx::Int                  # nx - number of points
     xc::ArrayType1      # cell centers
+    xc_physical::ArrayType1 # physical cell centers (Excluding ghosts)
     xf::ArrayType1      # cell faces
     dx::ArrayType2      # cell sizes (TODO - This was for offset array)
+    dx0::RealT # constant value of dx0
+               # (TODO - This is used for a hacky way to compute errors,
+               #         will not support nonuniform grids)
 end
 
 @kernel function linrange_kernel(start, stop, arr)
@@ -55,16 +59,17 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     RealT = eltype(domain)
     @assert xmin < xmax
     println("Making uniform grid of interval [", xmin, ", ", xmax,"]")
-    dx1 = (xmax - xmin)/nx
-    xc = gpu_linrange(xmin-0.5f0*dx1, xmax+0.5f0*dx1, nx+2, RealT, backend_kernel) # 2 dummy elements
+    dx0 = (xmax - xmin)/nx
+    xc = gpu_linrange(xmin-0.5f0*dx0, xmax+0.5f0*dx0, nx+2, RealT, backend_kernel) # 2 dummy elements
+    xc_physical = @view xc[2:end-1]
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
-    @printf("   dx                            = %e\n", dx1)
-    dx_ = dx1 .* KernelAbstractions.ones(backend_kernel, RealT, nx+2)
+    @printf("   dx                            = %e\n", dx0)
+    dx_ = dx0 .* KernelAbstractions.ones(backend_kernel, RealT, nx+2)
     # dx = OffsetArray(dx_, OffsetArrays.Origin(0)) # TODO - This doesn't work with GPU
     dx = dx_
-    xf = gpu_linrange(xmin-dx1, xmax+dx1, nx+3, RealT, backend_kernel)
-    return CartesianGrid1D(domain, nx, xc, xf, dx)
+    xf = gpu_linrange(xmin-dx0, xmax+dx0, nx+3, RealT, backend_kernel)
+    return CartesianGrid1D(domain, nx, xc, xc_physical, xf, dx, dx0)
 end
 
 """
@@ -80,11 +85,15 @@ function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
 
     u_ = allocate(backend_kernel, RealT, nvar, nx+2)
     # u = OffsetArray(u_, OffsetArrays.Origin(1, 0))
+    u_physical = @view u_[:, 2:end-1]
     u = u_
     res = copy(u) # dU/dt + res(U) = 0
     Fn = copy(u) # numerical flux
+    exact_array = allocate(backend_kernel, RealT, nvar, nx) # Used to store exact solution in
+                                                            # error computation
+    error_array = copy(exact_array) # Uses to store pointwise in error computation
 
-    cache = (; u, res, Fn, backend_kernel)
+    cache = (; u, u_physical, res, Fn, exact_array, error_array, backend_kernel)
 
     return cache
 end
@@ -118,9 +127,9 @@ end
 Set the initial value of the solution.
 """
 @kernel function set_initial_value_kernel!(u, xc, equations::AbstractEquations{1},
-                                           initial_value)
+                                           initial_value, t)
     i = @index(Global, Linear)
-    u[:,i] .= initial_value(xc[i], 0.0f0, equations)
+    u[:,i] .= initial_value(xc[i], t, equations)
 end
 
 """
@@ -159,19 +168,16 @@ end
 Compute the error of the solution.
 """
 function compute_error(semi, t)
-    (; grid, equations, initial_condition, cache, solver) = semi
-    (; u) = cache
-    error_l2, error_l1, error_linf = (zero(eltype(u)) for _=1:3)
-    (; nx, dx, xc) = grid
-    @allowscalar for i=2:nx+1
-       u_   = u[1, i]
-       u_exact = initial_condition(xc[i], t, equations)
-       error = abs(u_ - u_exact[1])
-       error_l1 += error   * dx[i]
-       error_l2 += error^2 * dx[i]
-       error_linf = max(error_linf, error)
-    end
-    error_l2 = sqrt(error_l2)
+    (; grid, equations, initial_condition, cache) = semi
+    (; exact_array, error_array, backend_kernel, u_physical) = cache
+    (; nx, xc_physical, dx0) = grid
+
+    set_initial_value_kernel!(backend_kernel, 256)(
+        exact_array, xc_physical, equations, initial_condition, t, ndrange = nx)
+    error_array .= abs.(u_physical .- exact_array)
+    error_l1 = sum(error_array * dx0)
+    error_l2 = sqrt.(sum(error_array.^2 * dx0))
+    error_linf = maximum(error_array)
     return error_l1, error_l2, error_linf
 end
 

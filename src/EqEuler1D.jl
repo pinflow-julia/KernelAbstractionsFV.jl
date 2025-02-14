@@ -1,5 +1,5 @@
 import Trixi: varnames, prim2cons, cons2prim, cons2cons, max_abs_speeds, flux
-using Trixi: nvariables
+using Trixi: nvariables, AbstractEquations
 
 """
     Euler1D
