@@ -89,11 +89,13 @@ function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
     u = u_
     res = copy(u) # dU/dt + res(U) = 0
     Fn = copy(u) # numerical flux
+    speeds = allocate(backend_kernel, RealT, nx+2) # Wave speed estimate at each point for
+                                                   # taking the maximum
     exact_array = allocate(backend_kernel, RealT, nvar, nx) # Used to store exact solution in
                                                             # error computation
     error_array = copy(exact_array) # Uses to store pointwise in error computation
 
-    cache = (; u, u_physical, res, Fn, exact_array, error_array, backend_kernel)
+    cache = (; u, u_physical, speeds, res, Fn, exact_array, error_array, backend_kernel)
 
     return cache
 end
@@ -103,21 +105,26 @@ end
 
 Compute the time step based on the CFL condition.
 """
+@kernel function compute_max_speed_kernel!(speeds, u,
+    equations::Union{Euler1D, CompressibleEulerEquations1D}, dx)
+    i = @index(Global, Linear)
+    u_node = SVector(u[1, i], u[2, i], u[3, i])
+    local_speed = sum(max_abs_speeds(u_node, equations)) # Since Trixi equations return it
+                                                         # as a tuple of one element
+    speeds[i] = local_speed / dx[i]
+end
+
 function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param)
     (; grid, equations, solver, cache) = semi
-    (; u) = cache
-    (; dx) = grid
+    (; u, speeds, backend_kernel) = cache
     (; Ccfl) = param
+    (; dx) = grid
 
-    # Compute the maximum wave speed
-    max_speed = zero(eltype(u))
-    for i in 2:grid.nx+1
-        u_node = get_node_vars(u, equations, solver, i)
-        @allowscalar max_speed = max(max_abs_speeds(u_node, equations)[1] / dx[i], max_speed)
-    end
+    compute_max_speed_kernel!(backend_kernel, 256)(
+        speeds, u, equations, grid.dx; ndrange = grid.nx+2)
 
-    # Compute the time step
-    dt = Ccfl * 1.0f0 / max_speed
+
+    dt = Ccfl * 1.0f0 / maximum(speeds)
     return dt
 end
 
@@ -174,7 +181,7 @@ function compute_error(semi, t)
 
     set_initial_value_kernel!(backend_kernel, 256)(
         exact_array, xc_physical, equations, initial_condition, t, ndrange = nx)
-    error_array .= abs.(u_physical .- exact_array)
+    error_array .= abs.(u_physical .- exact_array) # TODO - Does this have auto-sync?
     error_l1 = sum(error_array * dx0)
     error_l2 = sqrt.(sum(error_array.^2 * dx0))
     error_linf = maximum(error_array)
