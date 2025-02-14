@@ -56,14 +56,14 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     @assert xmin < xmax
     println("Making uniform grid of interval [", xmin, ", ", xmax,"]")
     dx1 = (xmax - xmin)/nx
-    xc = gpu_linrange(xmin+0.5f0*dx1, xmax-0.5f0*dx1, nx, RealT, backend_kernel)
+    xc = gpu_linrange(xmin-0.5f0*dx1, xmax+0.5f0*dx1, nx+2, RealT, backend_kernel) # 2 dummy elements
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
     @printf("   dx                            = %e\n", dx1)
     dx_ = dx1 .* KernelAbstractions.ones(backend_kernel, RealT, nx+2)
-    dx = OffsetArray(dx_, OffsetArrays.Origin(0)) # TODO - This doesn't work with GPU
-    # dx = dx_
-    xf = gpu_linrange(xmin, xmax, nx+1, RealT, backend_kernel)
+    # dx = OffsetArray(dx_, OffsetArrays.Origin(0)) # TODO - This doesn't work with GPU
+    dx = dx_
+    xf = gpu_linrange(xmin-dx1, xmax+dx1, nx+3, RealT, backend_kernel)
     return CartesianGrid1D(domain, nx, xc, xf, dx)
 end
 
@@ -79,7 +79,8 @@ function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
     # Allocating variables
 
     u_ = allocate(backend_kernel, RealT, nvar, nx+2)
-    u = OffsetArray(u_, OffsetArrays.Origin(1, 0))
+    # u = OffsetArray(u_, OffsetArrays.Origin(1, 0))
+    u = u_
     res = copy(u) # dU/dt + res(U) = 0
     Fn = copy(u) # numerical flux
 
@@ -104,13 +105,13 @@ function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, para
 
     # Compute the maximum wave speed
     max_speed = zero(eltype(u))
-    for i in 1:grid.nx
+    for i in 2:grid.nx+1
         u_node = get_node_vars(u, equations, solver, i)
-        max_speed = max(max_abs_speeds(u_node, equations)[1] / dx[i], max_speed)
+        @allowscalar max_speed = max(max_abs_speeds(u_node, equations)[1] / dx[i], max_speed)
     end
 
     # Compute the time step
-    dt[1] = Ccfl * 1.0 / max_speed
+    @allowscalar dt[1] = Ccfl * 1.0 / max_speed
 end
 
 """
@@ -118,12 +119,10 @@ end
 
 Set the initial value of the solution.
 """
-@kernel function set_initial_value_kernel!(cache, grid, equations::AbstractEquations{1},
+@kernel function set_initial_value_kernel!(u, xc, equations::AbstractEquations{1},
                                            initial_value)
     i = @index(Global, Linear)
-    (; u) = cache
-    (; nx, xc) = grid
-    u[:,i] .= initial_value(xc[i], 0.0, equations)
+    u[:,i] .= initial_value(xc[i], 0.0f0, equations)
 end
 
 """
@@ -133,7 +132,7 @@ Apply the left boundary condition.
 """
 function apply_left_bc!(cache, left::PeriodicBC, grid::CartesianGrid1D)
     (; u) = cache
-    u[:, 0] .= @views u[:, grid.nx]
+    u[:, 1] .= @views u[:, grid.nx+1]
 end
 
 """
@@ -143,7 +142,7 @@ Apply the right boundary condition.
 """
 function apply_right_bc!(cache, right::PeriodicBC, grid::CartesianGrid1D)
     (; u) = cache
-    u[:, grid.nx+1] .= @views u[:, 1]
+    u[:, grid.nx+2] .= @views u[:, 2]
 end
 
 """
@@ -162,11 +161,11 @@ end
 Compute the error of the solution.
 """
 function compute_error(semi, t)
-    (; grid, equations, initial_condition, cache) = semi
+    (; grid, equations, initial_condition, cache, solver) = semi
     (; u) = cache
     error_l2, error_l1, error_linf = (zero(eltype(u)) for _=1:3)
     (; nx, dx, xc) = grid
-    for i=1:nx
+    @allowscalar for i=2:nx+1
        u_   = u[1, i]
        u_exact = initial_condition(xc[i], t, equations)
        error = abs(u_ - u_exact[1])
@@ -196,14 +195,14 @@ function update_rhs!(semi)
     (; nx, dx, xf) = grid
     (; u, Fn, res) = cache
     # TODO: Is 256 an optimal workgroup size?
-    update_rhs_kernel!(get_backend(u),256)(Fn, res, equations, solver, dx; ndrange = nx)
+    update_rhs_kernel!(get_backend(u),256)(Fn, res, equations, solver, dx; ndrange = nx+1)
 end
 
 @kernel function update_rhs_kernel!(Fn, res, equations, solver, dx)
     i = @index(Global, Linear)
         fn_rr = get_node_vars(Fn, equations, solver, i+1)
         fn_ll = get_node_vars(Fn, equations, solver, i)
-        res[:, i] .+= (fn_rr - fn_ll)/ dx[i]
+        res[:, i+1] .+= (fn_rr - fn_ll)/ dx[i]
 end
 
 function compute_surface_fluxes!(semi)
@@ -213,11 +212,10 @@ function compute_surface_fluxes!(semi)
     (; u, Fn, res) = cache
     # TODO: Is 256 an optimal workgroup size?
     compute_surface_fluxes_kernel!(get_backend(u), 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
-
 end
 
 @kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux)
     i = @index(Global, Linear)
-        ul, ur = get_node_vars(u, equations, solver, i-1), get_node_vars(u, equations, solver, i)
+        ul, ur = get_node_vars(u, equations, solver, i+1), get_node_vars(u, equations, solver, i)
         Fn[:, i] .= surface_flux(ul, ur, 1, equations)
 end

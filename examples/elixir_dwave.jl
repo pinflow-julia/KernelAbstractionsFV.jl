@@ -1,10 +1,12 @@
 using KernelAbstractionsFV
 using Trixi
 using KernelAbstractions
+using Metal
 
 RealT = Float32
 domain = (0.0f0, 1.0f0)
-nx = 800
+nx = 80
+# backend_kernel = MetalBackend()
 backend_kernel = CPU()
 
 grid = make_grid(domain, nx, backend_kernel)

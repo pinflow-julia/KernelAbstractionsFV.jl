@@ -24,6 +24,8 @@ Abstract type for boundary conditions.
 """
 abstract type AbstractBoundaryCondition end
 
+using GPUArraysCore
+
 """
     get_node_vars(u, equations, solver, indices...)
 
@@ -31,7 +33,7 @@ Get the conservative variables specified indices as an SVector.
 """
 @inline function get_node_vars(u, equations, solver::AbstractSpatialSolver, indices...)
     # Copied from Trixi.jl
-    SVector(ntuple(@inline(v->u[v, indices...]), Val(nvariables(equations))))
+    @allowscalar SVector(ntuple(@inline(v->u[v, indices...]), Val(nvariables(equations))))
 end
 
 """
@@ -87,8 +89,8 @@ function SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_con
     cache = (;cache..., create_cache(equations, grid, backend_kernel)...)
     # set_initial_value!(cache, grid, equations, initial_condition)
     # TODO - This works only for 1-D!
-    set_initial_value_kernel!(backend_kernel, 256)(
-        cache, grid, equations, initial_condition; ndrange = grid.nx)
+    set_initial_value_kernel!(backend_kernel)(
+        cache.u, grid.xc, equations, initial_condition; ndrange = grid.nx+2)
     SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition,
                                  boundary_conditions, solver, cache)
 end
@@ -123,7 +125,7 @@ function adjust_time_step(ode, param, t)
    final_time = ode.tspan[2]
    (; save_time_interval) = param
     (; dt) = ode.semi.cache
-   if t + dt[1] > final_time
+   @allowscalar if t + dt[1] > final_time
       dt[1] = final_time - t
       return nothing
    end
