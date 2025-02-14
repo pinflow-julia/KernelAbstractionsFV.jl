@@ -29,24 +29,40 @@ struct CartesianGrid1D{RealT <: Real}
     dx::OffsetVector{RealT}      # cell sizes
 end
 
+@kernel function linrange_kernel(start, stop, arr)
+    i = @index(Global)
+    N = length(arr)
+    if i ≤ N
+        arr[i] = start + (stop - start) * (i - 1) / (N - 1)
+    end
+end
+
+function gpu_linrange(start, stop, N, RealT, backend)
+    arr = KernelAbstractions.zeros(backend, RealT, N)  # GPU array
+    kernel = linrange_kernel(backend, N)               # Define kernel
+    kernel(start, stop, arr, ndrange=N)                # Launch kernel
+    KernelAbstractions.synchronize(backend)            # Sync to ensure execution is complete
+    return arr
+end
+
 """
     make_grid(domain::Tuple{<:Real, <:Real}, nx)
 
 Constructor for the CartesianGrid1D struct. It creates a uniform grid with nx points in the domain.
 """
-function make_grid(domain::Tuple{<:Real, <:Real}, nx)
+function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     xmin, xmax = domain
     RealT = eltype(domain)
     @assert xmin < xmax
     println("Making uniform grid of interval [", xmin, ", ", xmax,"]")
     dx1 = (xmax - xmin)/nx
-    xc = LinRange{RealT}(xmin+0.5*dx1, xmax-0.5*dx1, nx)
+    xc = gpu_linrange(xmin+0.5f0*dx1, xmax-0.5f0*dx1, nx, RealT, backend_kernel)
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
     @printf("   dx                            = %e\n", dx1)
-    dx_ = dx1 .* ones(RealT, nx+2)
+    dx_ = dx1 .* KernelAbstractions.ones(backend_kernel, RealT, nx+2)
     dx = OffsetArray(dx_, OffsetArrays.Origin(0))
-    xf = LinRange{RealT}(xmin, xmax, nx+1)
+    xf = gpu_linrange(xmin, xmax, nx+1, RealT, backend_kernel)
     return CartesianGrid1D(domain, nx, collect(xc), collect(xf), dx)
 end
 
