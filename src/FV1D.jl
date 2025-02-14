@@ -102,6 +102,7 @@ end
 Set the initial value of the solution.
 """
 function set_initial_value!(cache, grid, equations::AbstractEquations{1}, initial_value)
+    (; u) = cache
     (; nx, xc) = grid
     for i=1:nx
         u[:,i] .= initial_value(xc[i], 0.0, equations)
