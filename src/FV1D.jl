@@ -21,12 +21,28 @@ end
 
 Struct containing the 1-D Cartesian grid information.
 """
-struct CartesianGrid1D{RealT <: Real}
+struct CartesianGrid1D{RealT <: Real, ArrayType1, ArrayType2}
     domain::Tuple{RealT,RealT}  # xmin, xmax
     nx::Int                  # nx - number of points
-    xc::Array{RealT, 1}      # cell centers
-    xf::Array{RealT, 1}      # cell faces
-    dx::OffsetVector{RealT}      # cell sizes
+    xc::ArrayType1      # cell centers
+    xf::ArrayType1      # cell faces
+    dx::ArrayType2      # cell sizes (TODO - This was for offset array)
+end
+
+@kernel function linrange_kernel(start, stop, arr)
+    i = @index(Global)
+    N = length(arr)
+    if i ≤ N
+        arr[i] = start + (stop - start) * (i - 1) / (N - 1)
+    end
+end
+
+function gpu_linrange(start, stop, N, RealT, backend)
+    arr = KernelAbstractions.zeros(backend, RealT, N)  # GPU array
+    kernel = linrange_kernel(backend, N)               # Define kernel
+    kernel(start, stop, arr, ndrange=N)                # Launch kernel
+    KernelAbstractions.synchronize(backend)            # Sync to ensure execution is complete
+    return arr
 end
 
 """
@@ -34,20 +50,21 @@ end
 
 Constructor for the CartesianGrid1D struct. It creates a uniform grid with nx points in the domain.
 """
-function make_grid(domain::Tuple{<:Real, <:Real}, nx)
+function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     xmin, xmax = domain
     RealT = eltype(domain)
     @assert xmin < xmax
     println("Making uniform grid of interval [", xmin, ", ", xmax,"]")
     dx1 = (xmax - xmin)/nx
-    xc = LinRange(xmin+0.5*dx1, xmax-0.5*dx1, nx)
+    xc = gpu_linrange(xmin+0.5f0*dx1, xmax-0.5f0*dx1, nx, RealT, backend_kernel)
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
     @printf("   dx                            = %e\n", dx1)
-    dx_ = dx1 .* ones(nx+2)
-    dx = OffsetArray(dx_, OffsetArrays.Origin(0))
-    xf = LinRange(xmin, xmax, nx+1)
-    return CartesianGrid1D(domain, nx, collect(xc), collect(xf), dx)
+    dx_ = dx1 .* KernelAbstractions.ones(backend_kernel, RealT, nx+2)
+    dx = OffsetArray(dx_, OffsetArrays.Origin(0)) # TODO - This doesn't work with GPU
+    # dx = dx_
+    xf = gpu_linrange(xmin, xmax, nx+1, RealT, backend_kernel)
+    return CartesianGrid1D(domain, nx, xc, xf, dx)
 end
 
 """
@@ -101,14 +118,12 @@ end
 
 Set the initial value of the solution.
 """
-function set_initial_value!(cache, grid::CartesianGrid1D, equations::AbstractEquations{1},
-                            initial_value)
-    nx = grid.nx
-    xc = grid.xc
+@kernel function set_initial_value_kernel!(cache, grid, equations::AbstractEquations{1},
+                                           initial_value)
+    i = @index(Global, Linear)
     (; u) = cache
-    for i=1:nx
-        u[:,i] .= initial_value(xc[i], 0.0, equations)
-    end
+    (; nx, xc) = grid
+    u[:,i] .= initial_value(xc[i], 0.0, equations)
 end
 
 """
@@ -169,7 +184,7 @@ end
 Compute the residual of the solution.
 """ # TODO - Dispatch for 1D. The fact that it doesn't work indicates a bug in julia.
 function compute_residual!(semi)
-   
+
     compute_surface_fluxes!(semi)
     update_rhs!(semi)
 
