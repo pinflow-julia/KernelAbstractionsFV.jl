@@ -183,7 +183,7 @@ function solve(ode::ODE, param::Parameters)
        update_solution!(semi, dt)
 
        @show l1, l2, linf
-       @allowscalar t += dt; it += 1
+       t += dt; it += 1
        @show t, dt, it
     end
     l1, l2, linf = compute_error(semi, t)

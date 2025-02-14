@@ -205,7 +205,8 @@ end
     res[:, i+1] .= rhs
 end
 
-@kernel function update_rhs_kernel!(Fn, res, equations::CompressibleEulerEquations1D, solver, dx)
+@kernel function update_rhs_kernel!(Fn, res,
+    equations::Union{CompressibleEulerEquations1D, Euler1D}, solver, dx)
     i = @index(Global, Linear)
     # fn_rr = get_node_vars(Fn, equations, solver, i+1)
     # fn_ll = get_node_vars(Fn, equations, solver, i)
@@ -236,7 +237,7 @@ end
 end
 
 @kernel function compute_surface_fluxes_kernel!(
-    Fn, u, equations::CompressibleEulerEquations1D, solver, surface_flux)
+    Fn, u, equations::Union{CompressibleEulerEquations1D, Euler1D}, solver, surface_flux)
     i = @index(Global, Linear)
 
     # TODO - Fix the names of ul, ur!!!
