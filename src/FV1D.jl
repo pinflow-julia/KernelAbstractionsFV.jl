@@ -24,9 +24,25 @@ Struct containing the 1-D Cartesian grid information.
 struct CartesianGrid1D{RealT <: Real}
     domain::Tuple{RealT,RealT}  # xmin, xmax
     nx::Int                  # nx - number of points
-    xc::Array{RealT, 1}      # cell centers
-    xf::Array{RealT, 1}      # cell faces
+    xc::AbstractArray      # cell centers
+    xf::AbstractArray      # cell faces
     dx::AbstractArray      # cell sizes
+end
+
+@kernel function linrange_kernel(start, stop, arr)
+    i = @index(Global)
+    N = length(arr)
+    if i ≤ N
+        arr[i] = start + (stop - start) * (i - 1) / (N - 1)
+    end
+end
+
+function gpu_linrange(start, stop, N, RealT, backend)
+    arr = KernelAbstractions.zeros(backend, RealT, N)  # GPU array
+    kernel = linrange_kernel(backend, N)               # Define kernel
+    kernel(start, stop, arr, ndrange=N)                # Launch kernel
+    KernelAbstractions.synchronize(backend)            # Sync to ensure execution is complete
+    return arr
 end
 
 """
@@ -40,14 +56,14 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx; backend_kernel = KernelAbs
     @assert xmin < xmax
     println("Making uniform grid of interval [", xmin, ", ", xmax,"]")
     dx1 = (xmax - xmin)/nx
-    xc = LinRange(xmin+0.5*dx1, xmax-0.5*dx1, nx)
+    xc = gpu_linrange(xmin+0.5f0*dx1, xmax-0.5f0*dx1, nx, RealT, backend_kernel)
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
     @printf("   dx                            = %e\n", dx1)
     RealT = eltype(xc)
     dx = KernelAbstractions.ones(backend_kernel, RealT, nx+2) .* dx1
-    xf = LinRange(xmin, xmax, nx+1)
-    return CartesianGrid1D(domain, nx, collect(xc), collect(xf), dx)
+    xf = gpu_linrange(xmin, xmax, nx+1, RealT, backend_kernel)
+    return CartesianGrid1D(domain, nx, xc, xf, dx)
 end
 
 """
@@ -109,12 +125,17 @@ function set_initial_value!(cache, grid::CartesianGrid1D, equations::AbstractEqu
     nx = grid.nx
     xc = grid.xc
     (; u) = cache
-    
+    backend = get_backend(u)
+    xc_cpu = copy(xc)
+    xc_cpu = Array(xc_cpu)
+
+
     for i = 1:nx
-       u[:,i+1] = collect(initial_value(xc[i], 0.0, equations))
-    end
+        u[:,i+1] = collect(initial_value(xc_cpu[i], 0.0, equations))
+     end
     
 end
+
 
 """
     apply_left_bc!(grid, left, cache)
@@ -156,23 +177,30 @@ function compute_error(semi, t)
 
     (; grid, equations, initial_condition, cache) = semi
     (; u) = cache
-    error_l2, error_l1, error_linf = (zero(eltype(u)) for _=1:3)
+    backend = get_backend(u)
+    error_l2 = allocate(backend, Float64, 1)
+    error_l1 = allocate(backend, Float64, 1)
+    error_linf = allocate(backend, Float64, 1)
+
     (; nx, dx, xc) = grid
     backend = get_backend(u)
-    compute_errors_kernel!(get_backend(u))(error_l2, error_l1, error_linf,u, initial_condition,t, xc, equations, dx; ndrange = nx)
+    tmp = allocate(backend, Float64, 3,1)
+    compute_errors_kernel!(get_backend(u))(error_l2, error_l1, error_linf,u, tmp, initial_condition,t, xc, equations, dx; ndrange = nx)
     synchronize(backend)
-
-    error_l2 = sqrt(error_l2)
-    return error_l1, error_l2, error_linf
+    error_l2 = Array(error_l2)
+    error_l2 = sqrt.(error_l2)
+    
+    return Array(error_l1), error_l2, Array(error_linf)
 end
 
-@kernel function compute_errors_kernel!(error_l2, error_l1, error_linf,u, initial_condition,t, xc, equations, dx)
+@kernel function compute_errors_kernel!(error_l2, error_l1, error_linf,u,tmp, initial_condition,t, xc, equations, dx)
     i = @index(Global, Linear)
-    u_exact = initial_condition(xc[i], t, equations)
-    error = abs(u[1, i+1] - u_exact[1])
-    error_l1 += error * dx[i+1]
-    error_l2 += error^2 * dx[i+1]
-    error_linf = max(error_linf,error)
+    tmp = initial_condition(xc[i], t, equations)
+    error = abs(u[1, i+1] - tmp[1])
+    error_l1[1] += error * dx[i+1]
+    error_l2[1] += error^2 * dx[i+1]
+   # error_l2[1] += tmp[1,1]
+    error_linf[1] = max(error_linf[1], error)
 end
 
 

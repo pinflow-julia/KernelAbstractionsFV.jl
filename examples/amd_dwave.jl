@@ -7,9 +7,10 @@ grid = make_grid(domain, nx; backend_kernel = ROCBackend())
 equations = Euler1D(1.4)
 
 function initial_condition_dwave(x, t, equations::Euler1D)
-    rho = 2.0 + 0.2*sin(2*pi*(x - 0.1*t))
-    v1 = 0.1
-    p = 1.0
+    RealT = eltype(x)
+    rho = map(RealT,2.0 + 0.2*sin(2*pi*(x - 0.1*t)))
+    v1 = 0.1f0
+    p = 1.0f0
     return prim2cons((rho, v1, p), equations)
 end
 
