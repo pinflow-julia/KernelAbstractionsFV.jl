@@ -198,13 +198,13 @@ function update_rhs!(semi)
     update_rhs_kernel!(get_backend(u),256)(Fn, res, equations, solver, dx; ndrange = nx+1)
 end
 
-@kernel function update_rhs_kernel!(Fn, res, equations, solver, dx)
+@kernel function update_rhs_kernel!(Fn, res, equations::CompressibleEulerEquations1D, solver, dx)
     i = @index(Global, Linear)
     # fn_rr = get_node_vars(Fn, equations, solver, i+1)
     # fn_ll = get_node_vars(Fn, equations, solver, i)
 
-    fn_rr = SVector(1.0f0, 2.0f0, 3.0f0)
-    fn_ll = SVector(1.0f0, 2.0f0, 3.0f0)
+    fn_rr = SVector(Fn[1, i+1], Fn[2, i+1], Fn[3, i+1])
+    fn_ll = SVector(Fn[1, i], Fn[2, i], Fn[3, i])
     rhs = (fn_rr - fn_ll)/ dx[i]
     res[:, i+1] .= rhs
 end
@@ -222,12 +222,24 @@ end
     i = @index(Global, Linear)
 
     # TODO - Fix the names of ul, ur!!!
-    # ul = get_node_vars(u, equations, solver, i+1)
     # ur = get_node_vars(u, equations, solver, i)
-    ul = SVector(1.0f0, 2.0f0, 3.0f0)
+    # ul = SVector(1.0f0, 2.0f0, 3.0f0)
+    ul = SVector(u[1, i], u[2, i], u[3, i])
+    # ul = get_node_vars(u, equations, solver, i+1)
     ur = SVector(1.0f0, 2.0f0, 3.0f0)
     1.0f0
     fn = surface_flux(ul, ur, 1, equations)
     1.0f0
+    Fn[:, i] .= fn
+end
+
+@kernel function compute_surface_fluxes_kernel!(
+    Fn, u, equations::CompressibleEulerEquations1D, solver, surface_flux)
+    i = @index(Global, Linear)
+
+    # TODO - Fix the names of ul, ur!!!
+    ul = SVector(u[1, i+1], u[2, i+1], u[3, i+1])
+    ur = SVector(u[1, i], u[2, i], u[3, i])
+    fn = surface_flux(ul, ur, 1, equations)
     Fn[:, i] .= fn
 end

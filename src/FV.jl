@@ -34,8 +34,15 @@ Get the conservative variables specified indices as an SVector.
 # @inline function get_node_vars(u, equations, solver::AbstractSpatialSolver, indices...)
 @inline function get_node_vars(u, equations, solver::AbstractSpatialSolver, indices)
     # Copied from Trixi.jl
-    # @allowscalar SVector(ntuple(@inline(v->u[v, indices...]), Val(nvariables(equations))))
-    return @view u[:, indices]
+    @allowscalar SVector(ntuple(@inline(v->u[v, indices...]), Val(nvariables(equations))))
+    # return @view u[:, indices]
+end
+
+@inline function get_node_vars(u, equations::CompressibleEulerEquations1D,
+                               solver::AbstractSpatialSolver, indices)
+    # Copied from Trixi.jl
+    @allowscalar SVector(u[1, indices], u[2, indices], u[3, indices])
+    # return @view u[:, indices]
 end
 
 """
