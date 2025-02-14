@@ -21,11 +21,11 @@ end
 
 Struct containing the 1-D Cartesian grid information.
 """
-struct CartesianGrid1D{RealT <: Real, ArrayType1, ArrayType2}
+struct CartesianGrid1D{RealT <: Real, ArrayType1, ArrayType1View, ArrayType2}
     domain::Tuple{RealT,RealT}  # xmin, xmax
     nx::Int                  # nx - number of points
     xc::ArrayType1      # cell centers
-    xc_physical::ArrayType1 # physical cell centers (Excluding ghosts)
+    xc_physical::ArrayType1View # physical cell centers (Excluding ghosts)
     xf::ArrayType1      # cell faces
     dx::ArrayType2      # cell sizes (TODO - This was for offset array)
     dx0::RealT # constant value of dx0
@@ -122,7 +122,7 @@ function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, para
 
     compute_max_speed_kernel!(backend_kernel, 256)(
         speeds, u, equations, grid.dx; ndrange = grid.nx+2)
-
+    KernelAbstractions.synchronize(backend_kernel)
 
     dt = Ccfl * 1.0f0 / maximum(speeds)
     return dt
@@ -254,8 +254,8 @@ end
     i = @index(Global, Linear)
 
     # TODO - Fix the names of ul, ur!!!
-    ul = SVector(u[1, i+1], u[2, i+1], u[3, i+1])
-    ur = SVector(u[1, i], u[2, i], u[3, i])
+    ur = SVector(u[1, i+1], u[2, i+1], u[3, i+1])
+    ul = SVector(u[1, i], u[2, i], u[3, i])
     fn = surface_flux(ul, ur, 1, equations)
     Fn[:, i] .= fn
 end

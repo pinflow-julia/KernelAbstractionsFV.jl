@@ -5,7 +5,7 @@ using KernelAbstractions
 
 RealT = Float32
 domain = (0.0f0, 1.0f0)
-nx = 80
+nx = 640
 backend_kernel = MetalBackend()
 # backend_kernel = CPU()
 
