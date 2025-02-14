@@ -31,9 +31,11 @@ using GPUArraysCore
 
 Get the conservative variables specified indices as an SVector.
 """
-@inline function get_node_vars(u, equations, solver::AbstractSpatialSolver, indices...)
+# @inline function get_node_vars(u, equations, solver::AbstractSpatialSolver, indices...)
+@inline function get_node_vars(u, equations, solver::AbstractSpatialSolver, indices)
     # Copied from Trixi.jl
-    @allowscalar SVector(ntuple(@inline(v->u[v, indices...]), Val(nvariables(equations))))
+    # @allowscalar SVector(ntuple(@inline(v->u[v, indices...]), Val(nvariables(equations))))
+    return @view u[:, indices]
 end
 
 """
@@ -151,9 +153,9 @@ Update the solution using the explicit method.
 function update_solution!(semi)
     (; cache) = semi
     (; u, res, dt) = cache
-    res .= 0.0
+    res .= 0.0f0
     compute_residual!(semi)
-    @. u -= dt[1]*res
+    @allowscalar u .-= dt[1]*res
 end
 
 """
@@ -176,7 +178,7 @@ function solve(ode::ODE, param::Parameters)
        update_solution!(semi)
 
        @show l1, l2, linf
-       t += dt[1]; it += 1
+       @allowscalar t += dt[1]; it += 1
        @show t, dt, it
     end
     l1, l2, linf = compute_error(semi, t)

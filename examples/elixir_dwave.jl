@@ -1,13 +1,13 @@
 using KernelAbstractionsFV
 using Trixi
-using KernelAbstractions
 using Metal
+using KernelAbstractions
 
 RealT = Float32
 domain = (0.0f0, 1.0f0)
 nx = 80
-# backend_kernel = MetalBackend()
-backend_kernel = CPU()
+backend_kernel = MetalBackend()
+# backend_kernel = CPU()
 
 grid = make_grid(domain, nx, backend_kernel)
 equations = CompressibleEulerEquations1D(1.4f0)

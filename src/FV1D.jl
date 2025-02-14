@@ -200,9 +200,13 @@ end
 
 @kernel function update_rhs_kernel!(Fn, res, equations, solver, dx)
     i = @index(Global, Linear)
-        fn_rr = get_node_vars(Fn, equations, solver, i+1)
-        fn_ll = get_node_vars(Fn, equations, solver, i)
-        res[:, i+1] .+= (fn_rr - fn_ll)/ dx[i]
+    # fn_rr = get_node_vars(Fn, equations, solver, i+1)
+    # fn_ll = get_node_vars(Fn, equations, solver, i)
+
+    fn_rr = SVector(1.0f0, 2.0f0, 3.0f0)
+    fn_ll = SVector(1.0f0, 2.0f0, 3.0f0)
+    rhs = (fn_rr - fn_ll)/ dx[i]
+    res[:, i+1] .= rhs
 end
 
 function compute_surface_fluxes!(semi)
@@ -216,6 +220,14 @@ end
 
 @kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux)
     i = @index(Global, Linear)
-        ul, ur = get_node_vars(u, equations, solver, i+1), get_node_vars(u, equations, solver, i)
-        Fn[:, i] .= surface_flux(ul, ur, 1, equations)
+
+    # TODO - Fix the names of ul, ur!!!
+    # ul = get_node_vars(u, equations, solver, i+1)
+    # ur = get_node_vars(u, equations, solver, i)
+    ul = SVector(1.0f0, 2.0f0, 3.0f0)
+    ur = SVector(1.0f0, 2.0f0, 3.0f0)
+    1.0f0
+    fn = surface_flux(ul, ur, 1, equations)
+    1.0f0
+    Fn[:, i] .= fn
 end
