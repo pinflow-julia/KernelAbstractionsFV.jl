@@ -40,13 +40,13 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx)
     @assert xmin < xmax
     println("Making uniform grid of interval [", xmin, ", ", xmax,"]")
     dx1 = (xmax - xmin)/nx
-    xc = LinRange(xmin+0.5*dx1, xmax-0.5*dx1, nx)
+    xc = LinRange{RealT}(xmin+0.5*dx1, xmax-0.5*dx1, nx)
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
     @printf("   dx                            = %e\n", dx1)
-    dx_ = dx1 .* ones(nx+2)
+    dx_ = dx1 .* ones(RealT, nx+2)
     dx = OffsetArray(dx_, OffsetArrays.Origin(0))
-    xf = LinRange(xmin, xmax, nx+1)
+    xf = LinRange{RealT}(xmin, xmax, nx+1)
     return CartesianGrid1D(domain, nx, collect(xc), collect(xf), dx)
 end
 
@@ -101,16 +101,12 @@ end
 
 Set the initial value of the solution.
 """
-function set_initial_value!(cache, grid::CartesianGrid1D, equations::AbstractEquations{1},
-                            initial_value)
-    nx = grid.nx
-    xc = grid.xc
-    (; u) = cache
+function set_initial_value!(cache, grid, equations::AbstractEquations{1}, initial_value)
+    (; nx, xc) = grid
     for i=1:nx
         u[:,i] .= initial_value(xc[i], 0.0, equations)
     end
 end
-
 """
     apply_left_bc!(grid, left, cache)
 
@@ -169,7 +165,7 @@ end
 Compute the residual of the solution.
 """ # TODO - Dispatch for 1D. The fact that it doesn't work indicates a bug in julia.
 function compute_residual!(semi)
-   
+
     compute_surface_fluxes!(semi)
     update_rhs!(semi)
 
