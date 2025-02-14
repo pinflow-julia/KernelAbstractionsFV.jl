@@ -1,8 +1,9 @@
 using KernelAbstractionsFV
+using AMDGPU
 
 domain = (0.0, 1.0)
-nx = 800
-grid = make_grid(domain, nx)
+nx = 10
+grid = make_grid(domain, nx, backend_kernel = ROCBackend())
 equations = Euler1D(1.4)
 
 function initial_condition_dwave(x, t, equations::Euler1D)
@@ -13,8 +14,8 @@ function initial_condition_dwave(x, t, equations::Euler1D)
 end
 
 surface_flux = flux_rusanov
-semi = SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition_dwave)
-tspan = (0.0, 0.1)
+semi = SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition_dwave, backend_kernel = ROCBackend() )
+tspan = (0.0, 0.0)
 ode = ODE(semi, tspan)
 Ccfl = 0.9
 save_time_interval = 0.0

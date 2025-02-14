@@ -80,9 +80,11 @@ are used by default.
 """
 function SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition;
     solver = FiniteVolumeSolver(),
-    boundary_conditions = BoundaryConditions(PeriodicBC(), PeriodicBC()), cache = (;))
+    boundary_conditions = BoundaryConditions(PeriodicBC(), PeriodicBC()), 
+    backend_kernel = KernelAbstractions.CPU(),
+    cache = (;))
 
-    cache = (;cache..., create_cache(equations, grid)...)
+    cache = (;cache..., create_cache(equations, grid, backend_kernel)...)
     set_initial_value!(cache, grid, equations, initial_condition)
     SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition,
                                  boundary_conditions, solver, cache)
@@ -157,16 +159,17 @@ Solve the conservation law.
 function solve(ode::ODE, param::Parameters)
     (; semi, tspan) = ode
     (; grid, cache, boundary_conditions) = semi
-    (; dt) = cache
+    (; dt, u) = cache
     Tf = tspan[2]
-
+    dt[1] = 0.001
     it, t = 0, 0.0
     while t < Tf
        l1, l2, linf = compute_error(semi, t)
-       compute_dt!(semi, param)
+     #  compute_dt!(semi, param)
        adjust_time_step(ode, param, t)
        update_ghost_values!(cache, grid, boundary_conditions)
        update_solution!(semi)
+
 
        @show l1, l2, linf
        t += dt[1]; it += 1

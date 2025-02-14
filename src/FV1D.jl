@@ -26,7 +26,7 @@ struct CartesianGrid1D{RealT <: Real}
     nx::Int                  # nx - number of points
     xc::Array{RealT, 1}      # cell centers
     xf::Array{RealT, 1}      # cell faces
-    dx::OffsetVector{RealT}      # cell sizes
+    dx::AbstractArray      # cell sizes
 end
 
 """
@@ -34,7 +34,7 @@ end
 
 Constructor for the CartesianGrid1D struct. It creates a uniform grid with nx points in the domain.
 """
-function make_grid(domain::Tuple{<:Real, <:Real}, nx)
+function make_grid(domain::Tuple{<:Real, <:Real}, nx; backend_kernel = KernelAbstractions.CPU())
     xmin, xmax = domain
     RealT = eltype(domain)
     @assert xmin < xmax
@@ -44,8 +44,11 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx)
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
     @printf("   dx                            = %e\n", dx1)
-    dx_ = dx1 .* ones(nx+2)
-    dx = OffsetArray(dx_, OffsetArrays.Origin(0))
+    RealT = eltype(xc)
+    dx = allocate(backend_kernel, RealT, nx+2)
+    dx .= dx1 * 1.0
+    @show typeof(dx)
+    #dx = OffsetArray(dx_, OffsetArrays.Origin(0))
     xf = LinRange(xmin, xmax, nx+1)
     return CartesianGrid1D(domain, nx, collect(xc), collect(xf), dx)
 end
@@ -55,20 +58,20 @@ end
 
 Struct containing everything about the spatial discretization.
 """
-function create_cache(equations, grid::CartesianGrid1D)
+function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
     nvar = nvariables(equations)
     nx = grid.nx
     RealT = eltype(grid.xc)
     # Allocating variables
-
-    u = OffsetArray(zeros(RealT, nvar, nx+2), OffsetArrays.Origin(1, 0))
+    u = allocate(backend_kernel, RealT, nvar, nx+2)
+    #u = OffsetArray(u_, OffsetArrays.Origin(1, 0))
     res = copy(u) # dU/dt + res(U) = 0
     Fn = copy(u) # numerical flux
 
     # TODO - dt is a vector to allow mutability. Is that necessary?
+    #dt = allocate(backend_kernel, RealT, 1)
     dt = Vector{RealT}(undef, 1)
-
-    cache = (; u, res, Fn, dt)
+    cache = (; u, res, Fn, dt, backend_kernel)
 
     return cache
 end
@@ -79,20 +82,29 @@ end
 Compute the time step based on the CFL condition.
 """
 function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param)
+
     (; grid, equations, solver, cache) = semi
     (; u, dt) = cache
     (; dx) = grid
     (; Ccfl) = param
-
-    # Compute the maximum wave speed
-    max_speed = zero(eltype(u))
-    for i in 1:grid.nx
-        u_node = get_node_vars(u, equations, solver, i)
-        max_speed = max(max_abs_speeds(u_node, equations)[1] / dx[i], max_speed)
-    end
-
-    # Compute the time step
+    max_speed = zero(eltype(dx))
+    backend = get_backend(u)
+    
+    compute_dt_kernel!(backend)(max_speed, u, equations, solver, dx; ndrange = grid.nx)
     dt[1] = Ccfl * 1.0 / max_speed
+
+    @show max_speed
+end
+
+@kernel function compute_dt_kernel!(max_speed, u, equations, solver, dx)
+    i = @index(Global, Linear)
+    u_node = collect(get_node_vars(u, equations, solver, i))
+    max_speed = max_abs_speeds(u_node, equations) / dx[i+1]
+    #max_speed = max(max_abs_speeds(u_node, equations)[1] / dx[i+1], max_speed)
+end
+
+function get_node_vars_new(u, equations, solver, index)
+    return u[:,index]
 end
 
 """
@@ -104,10 +116,12 @@ function set_initial_value!(cache, grid::CartesianGrid1D, equations::AbstractEqu
                             initial_value)
     nx = grid.nx
     xc = grid.xc
-    (; u) = cache
-    for i=1:nx
-        u[:,i] .= initial_value(xc[i], 0.0, equations)
+    (; u, backend_kernel) = cache
+    
+    for i = 1:nx
+       u[:,i+1] =  collect(initial_value(xc[i], 0.0, equations))
     end
+    
 end
 
 """
@@ -117,7 +131,7 @@ Apply the left boundary condition.
 """
 function apply_left_bc!(cache, left::PeriodicBC, grid::CartesianGrid1D)
     (; u) = cache
-    u[:, 0] .= @views u[:, grid.nx]
+    u[:, 1] .= @views u[:, grid.nx+1]
 end
 
 """
@@ -127,7 +141,7 @@ Apply the right boundary condition.
 """
 function apply_right_bc!(cache, right::PeriodicBC, grid::CartesianGrid1D)
     (; u) = cache
-    u[:, grid.nx+1] .= @views u[:, 1]
+    u[:, grid.nx+2] .= @views u[:, 2]
 end
 
 """
@@ -145,22 +159,30 @@ end
 
 Compute the error of the solution.
 """
+
 function compute_error(semi, t)
+
     (; grid, equations, initial_condition, cache) = semi
     (; u) = cache
     error_l2, error_l1, error_linf = (zero(eltype(u)) for _=1:3)
     (; nx, dx, xc) = grid
-    for i=1:nx
-       u_   = u[1, i]
-       u_exact = initial_condition(xc[i], t, equations)
-       error = abs(u_ - u_exact[1])
-       error_l1 += error   * dx[i]
-       error_l2 += error^2 * dx[i]
-       error_linf = max(error_linf, error)
-    end
+    backend = get_backend(u)
+    compute_errors_kernel!(get_backend(u))(error_l2, error_l1, error_linf,u, initial_condition,t, xc, equations, dx; ndrange = nx)
+    synchronize(backend)
+
     error_l2 = sqrt(error_l2)
     return error_l1, error_l2, error_linf
 end
+
+@kernel function compute_errors_kernel!(error_l2, error_l1, error_linf,u, initial_condition,t, xc, equations, dx)
+    i = @index(Global, Linear)
+    u_exact = initial_condition(xc[i], t, equations)
+    error = abs(u[1, i+1] - u_exact[1])
+    error_l1 += error * dx[i+1]
+    error_l2 += error^2 * dx[i+1]
+    error_linf = max(error_linf,error)
+end
+
 
 """
     compute_residual!(semi)
@@ -179,15 +201,20 @@ function update_rhs!(semi)
     (; grid, equations, surface_flux, solver, cache) = semi
     (; nx, dx, xf) = grid
     (; u, Fn, res) = cache
-    # TODO: Is 256 an optimal workgroup size?
-    update_rhs_kernel!(get_backend(u),256)(Fn, res, equations, solver, dx; ndrange = nx)
+
+    nx = grid.nx
+    backend = get_backend(u)
+
+    update_rhs_kernel!(backend)(res, Fn, dx, equations, solver; ndrange = nx)
+    synchronize(backend)
+
 end
 
-@kernel function update_rhs_kernel!(Fn, res, equations, solver, dx)
+@kernel function update_rhs_kernel!(res, Fn, dx, equations, solver)
     i = @index(Global, Linear)
-        fn_rr = get_node_vars(Fn, equations, solver, i+1)
-        fn_ll = get_node_vars(Fn, equations, solver, i)
-        res[:, i] .+= (fn_rr - fn_ll)/ dx[i]
+    for k = 1:3
+        res[k,i+1] += (Fn[k,i+2] - Fn[k,i+1])/dx[i]
+    end
 end
 
 function compute_surface_fluxes!(semi)
@@ -196,12 +223,16 @@ function compute_surface_fluxes!(semi)
     (; nx, dx, xf) = grid
     (; u, Fn, res) = cache
     # TODO: Is 256 an optimal workgroup size?
-    compute_surface_fluxes_kernel!(get_backend(u), 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
-
+    backend = get_backend(u)
+    compute_surface_fluxes_kernel!(backend)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
+    synchronize(backend)
 end
 
 @kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux)
     i = @index(Global, Linear)
-        ul, ur = get_node_vars(u, equations, solver, i-1), get_node_vars(u, equations, solver, i)
-        Fn[:, i] .= surface_flux(ul, ur, 1, equations)
+        ul, ur = get_node_vars(u, equations, solver, i), get_node_vars(u, equations, solver, i+1)
+        flux = surface_flux(ul, ur, 1, equations)
+        for k = 1:3
+        Fn[k, i+1] = flux[k] 
+        end
 end
