@@ -198,6 +198,15 @@ function update_rhs!(semi)
     update_rhs_kernel!(get_backend(u),256)(Fn, res, equations, solver, dx; ndrange = nx+1)
 end
 
+@kernel function update_rhs_kernel!(Fn, res, equations, solver, dx)
+    i = @index(Global, Linear)
+    fn_rr = get_node_vars(Fn, equations, solver, i+1)
+    fn_ll = get_node_vars(Fn, equations, solver, i)
+
+    rhs = (fn_rr - fn_ll)/ dx[i]
+    res[:, i+1] .= rhs
+end
+
 @kernel function update_rhs_kernel!(Fn, res, equations::CompressibleEulerEquations1D, solver, dx)
     i = @index(Global, Linear)
     # fn_rr = get_node_vars(Fn, equations, solver, i+1)
@@ -222,14 +231,9 @@ end
     i = @index(Global, Linear)
 
     # TODO - Fix the names of ul, ur!!!
-    # ur = get_node_vars(u, equations, solver, i)
-    # ul = SVector(1.0f0, 2.0f0, 3.0f0)
-    ul = SVector(u[1, i], u[2, i], u[3, i])
-    # ul = get_node_vars(u, equations, solver, i+1)
-    ur = SVector(1.0f0, 2.0f0, 3.0f0)
-    1.0f0
+    ur = get_node_vars(u, equations, solver, i)
+    ul = get_node_vars(u, equations, solver, i+1)
     fn = surface_flux(ul, ur, 1, equations)
-    1.0f0
     Fn[:, i] .= fn
 end
 
