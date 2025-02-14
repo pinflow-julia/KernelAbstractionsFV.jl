@@ -108,6 +108,15 @@ function set_initial_value!(cache, grid, equations::AbstractEquations{1}, initia
         u[:,i] .= initial_value(xc[i], 0.0, equations)
     end
 end
+
+@kernel function set_initial_value_kernel!(cache, grid, equations::AbstractEquations{1},
+                                           initial_value)
+    i = @index(Global, Linear)
+    (; u) = cache
+    (; nx, xc) = grid
+    u[:,i] .= initial_value(xc[i], 0.0, equations)
+end
+
 """
     apply_left_bc!(grid, left, cache)
 
