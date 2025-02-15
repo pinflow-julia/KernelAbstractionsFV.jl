@@ -155,7 +155,7 @@ end
 
 Solve the conservation law.
 """
-function solve(ode::ODE, param::Parameters)
+function solve(ode::ODE, param::Parameters; maxiters = nothing)
     (; semi, tspan) = ode
     (; grid, cache, boundary_conditions) = semi
     Tf = tspan[2]
