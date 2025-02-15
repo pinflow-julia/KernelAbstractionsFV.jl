@@ -21,12 +21,15 @@ end
 
 Struct containing the 1-D Cartesian grid information.
 """
-struct CartesianGrid1D{RealT <: Real}
+struct CartesianGrid1D{RealT <: Real, ArrayType1, ArrayType2}
     domain::Tuple{RealT,RealT}  # xmin, xmax
     nx::Int                  # nx - number of points
-    xc::Array{RealT, 1}      # cell centers
-    xf::Array{RealT, 1}      # cell faces
-    dx::OffsetVector{RealT}      # cell sizes
+    xc::ArrayType1      # cell centers
+    xf::ArrayType1      # cell faces
+    dx::ArrayType2      # cell sizes (TODO - This was for offset array)
+    dx0::RealT # constant value of dx0
+               # (TODO - This is used for a hacky way to compute errors,
+               #         will not support nonuniform grids)
 end
 
 """
@@ -34,20 +37,20 @@ end
 
 Constructor for the CartesianGrid1D struct. It creates a uniform grid with nx points in the domain.
 """
-function make_grid(domain::Tuple{<:Real, <:Real}, nx)
+function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     xmin, xmax = domain
     RealT = eltype(domain)
     @assert xmin < xmax
     println("Making uniform grid of interval [", xmin, ", ", xmax,"]")
-    dx1 = (xmax - xmin)/nx
-    xc = LinRange(xmin+0.5*dx1, xmax-0.5*dx1, nx)
+    dx0 = (xmax - xmin)/nx
+    xc = LinRange(xmin+0.5f0*dx0, xmax-0.5f0*dx0, nx)
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
-    @printf("   dx                            = %e\n", dx1)
-    dx_ = dx1 .* ones(nx+2)
+    @printf("   dx                            = %e\n", dx0)
+    dx_ = dx0 .* ones(nx+2)
     dx = OffsetArray(dx_, OffsetArrays.Origin(0))
     xf = LinRange(xmin, xmax, nx+1)
-    return CartesianGrid1D(domain, nx, collect(xc), collect(xf), dx)
+    return CartesianGrid1D(domain, nx, collect(xc), collect(xf), dx, dx0)
 end
 
 """
