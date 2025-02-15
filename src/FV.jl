@@ -126,7 +126,7 @@ function adjust_time_step(ode, param, t)
    end
 
    # Adjust to reach next solution saving time
-   if save_time_interval > 0.0
+   if save_time_interval > 0.0f0
       next_save_time = ceil(t/save_time_interval) * save_time_interval
       # If t is not a plotting time, we check if the next time
       # would step over the plotting time to adjust dt
@@ -146,7 +146,7 @@ Update the solution using the explicit method.
 function update_solution!(semi)
     (; cache) = semi
     (; u, res, dt) = cache
-    res .= 0.0
+    res .= 0.0f0
     compute_residual!(semi)
     @. u -= dt[1]*res
 end
@@ -162,7 +162,7 @@ function solve(ode::ODE, param::Parameters)
     (; dt) = cache
     Tf = tspan[2]
 
-    it, t = 0, 0.0
+    it, t = 0, 0.0f0
     while t < Tf
        l1, l2, linf = compute_error(semi, t)
        compute_dt!(semi, param)

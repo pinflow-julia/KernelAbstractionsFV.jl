@@ -93,7 +93,7 @@ function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, para
     end
 
     # Compute the time step
-    dt[1] = Ccfl * 1.0 / max_speed
+    dt[1] = Ccfl * 1.0f0 / max_speed
 end
 
 """
@@ -107,7 +107,7 @@ function set_initial_value!(cache, grid::CartesianGrid1D, equations::AbstractEqu
     xc = grid.xc
     (; u) = cache
     for i=1:nx
-        u[:,i] .= initial_value(xc[i], 0.0, equations)
+        u[:,i] .= initial_value(xc[i], 0.0f0, equations)
     end
 end
 
@@ -169,7 +169,7 @@ end
 Compute the residual of the solution.
 """ # TODO - Dispatch for 1D. The fact that it doesn't work indicates a bug in julia.
 function compute_residual!(semi)
-   
+
     compute_surface_fluxes!(semi)
     update_rhs!(semi)
 
