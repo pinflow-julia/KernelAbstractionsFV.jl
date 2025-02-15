@@ -195,8 +195,8 @@ function compute_error(semi, t)
     KernelAbstractions.synchronize(backend_kernel)
 
     set_initial_value_kernel!(backend_kernel, 256)(
-        exact_array, xc_physical, equations, initial_condition, t, ndrange = nx)
-        KernelAbstractions.synchronize(backend_kernel)
+    exact_array, xc_physical, equations, initial_condition, t, ndrange = nx)
+    KernelAbstractions.synchronize(backend_kernel)
     error_array .= abs.(u_physical .- exact_array) # TODO - Does this have auto-sync?
     error_l1 = sum(error_array * dx0)
     error_l2 = sqrt.(sum(error_array.^2 * dx0))
@@ -223,8 +223,7 @@ function update_rhs!(semi)
     (; u, Fn, res, backend_kernel) = cache
     # TODO: Is 256 an optimal workgroup size?
     KernelAbstractions.synchronize(backend_kernel)
-
-    update_rhs_kernel!(backend_kernel)(Fn, res, equations, solver, dx; ndrange = nx+1)
+    update_rhs_kernel!(backend_kernel,256)(Fn, res, equations, solver, dx; ndrange = nx+1)
     KernelAbstractions.synchronize(backend_kernel)
 end
 
@@ -241,11 +240,10 @@ end
 @kernel function update_rhs_kernel!(Fn, res,
     equations::Union{CompressibleEulerEquations1D, Euler1D}, solver, dx)
     i = @index(Global, Linear)
-    # fn_rr = get_node_vars(Fn, equations, solver, i+1)
-    # fn_ll = get_node_vars(Fn, equations, solver, i)
 
-    fn_rr = SVector(Fn[1, i+1], Fn[2, i+1], Fn[3, i+1])
-    fn_ll = SVector(Fn[1, i], Fn[2, i], Fn[3, i])
+    nvar = Val(nvariables(equations))
+    fn_rr = get_node_vars_gpu(Fn, nvar, i+1)
+    fn_ll = get_node_vars_gpu(Fn, nvar, i)
     rhs = (fn_rr - fn_ll)/ dx[i]
     res[:, i+1] .= rhs
 end
@@ -257,8 +255,7 @@ function compute_surface_fluxes!(semi)
     (; u, Fn, res, backend_kernel) = cache
     # TODO: Is 256 an optimal workgroup size?
     KernelAbstractions.synchronize(backend_kernel)
-
-    compute_surface_fluxes_kernel!(backend_kernel)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
+    compute_surface_fluxes_kernel!(backend_kernel, 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
     KernelAbstractions.synchronize(backend_kernel)
 end
 
@@ -274,11 +271,11 @@ end
 @kernel function compute_surface_fluxes_kernel!(
     Fn, u, equations::Union{CompressibleEulerEquations1D, Euler1D}, solver, surface_flux)
     i = @index(Global, Linear)
-
     nvar = Val(nvariables(equations))
 
     ul = get_node_vars_gpu(u, nvar, i)
     ur = get_node_vars_gpu(u, nvar, i+1)
+
     fn = surface_flux(ul, ur, 1, equations)
     Fn[:, i] .= fn
 end
