@@ -147,10 +147,7 @@ Set the initial value of the solution.
 @kernel function set_initial_value_kernel!(u, xc, equations::AbstractEquations{1},
                                            initial_value, t)
     i = @index(Global, Linear)
-    var = initial_value(xc[i], t, equations)
-    for k = 1:3
-     u[k,i] = var[k]
-    end
+    u[:, i] .= initial_value(xc[i], t, equations)
 end
 
 """

@@ -6,8 +6,8 @@ using KernelAbstractions
 RealT = Float32
 domain = map(RealT, (0.0, 1.0))
 nx = 640
-backend_kernel = MetalBackend()
-# backend_kernel = CPU()
+# backend_kernel = MetalBackend()
+backend_kernel = CPU()
 
 grid = make_grid(domain, nx, backend_kernel)
 equations = CompressibleEulerEquations1D(1.4f0)
@@ -32,3 +32,9 @@ param = Parameters(Ccfl, save_time_interval)
 sol = solve(ode, param)
 
 @show sol.l1, sol.l2
+if backend_kernel isa MetalBackend
+    @assert sol.l1 == 0.0004033974f0 sol.l1
+end
+if backend_kernel isa CPU
+    @assert sol.l1 == 0.00040343273f0 sol.l1
+end
