@@ -69,10 +69,7 @@ function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
     res = copy(u) # dU/dt + res(U) = 0
     Fn = copy(u) # numerical flux
 
-    # TODO - dt is a vector to allow mutability. Is that necessary?
-    dt = allocate(backend_kernel, RealT, 1)
-
-    cache = (; u, res, Fn, dt, backend_kernel)
+    cache = (; u, res, Fn, backend_kernel)
 
     return cache
 end
@@ -84,7 +81,7 @@ Compute the time step based on the CFL condition.
 """
 function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param)
     (; grid, equations, solver, cache) = semi
-    (; u, dt) = cache
+    (; u) = cache
     (; dx) = grid
     (; Ccfl) = param
 
@@ -96,7 +93,8 @@ function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, para
     end
 
     # Compute the time step
-    dt[1] = Ccfl * 1.0f0 / max_speed
+    dt = Ccfl * 1.0f0 / max_speed
+    return dt
 end
 
 """

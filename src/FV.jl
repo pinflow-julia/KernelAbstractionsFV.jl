@@ -115,14 +115,13 @@ end
 
 Adjusts the time step to reach the final time exactly and to reach the next solution saving time.
 """
-function adjust_time_step(ode, param, t)
+function adjust_time_step(ode, param, dt, t)
    # Adjust to reach final time exactly
    final_time = ode.tspan[2]
    (; save_time_interval) = param
-    (; dt) = ode.semi.cache
-   if t + dt[1] > final_time
-      dt[1] = final_time - t
-      return nothing
+   if t + dt > final_time
+      dt = final_time - t
+      return dt
    end
 
    # Adjust to reach next solution saving time
@@ -130,12 +129,12 @@ function adjust_time_step(ode, param, t)
       next_save_time = ceil(t/save_time_interval) * save_time_interval
       # If t is not a plotting time, we check if the next time
       # would step over the plotting time to adjust dt
-      if abs(t-next_save_time) > 1e-10 && t + dt[1] - next_save_time > 1e-10
-         dt[1] = next_save_time - t
-         return nothing
+      if abs(t-next_save_time) > 1e-10 && t + dt - next_save_time > 1e-10
+         dt = next_save_time - t
+         return dt
       end
    end
-   return nothing
+   return dt
 end
 
 """
@@ -143,12 +142,12 @@ end
 
 Update the solution using the explicit method.
 """
-function update_solution!(semi)
+function update_solution!(semi, dt)
     (; cache) = semi
-    (; u, res, dt) = cache
+    (; u, res) = cache
     res .= 0.0f0
     compute_residual!(semi)
-    @. u -= dt[1]*res
+    @. u -= dt*res
 end
 
 """
@@ -159,19 +158,18 @@ Solve the conservation law.
 function solve(ode::ODE, param::Parameters)
     (; semi, tspan) = ode
     (; grid, cache, boundary_conditions) = semi
-    (; dt) = cache
     Tf = tspan[2]
 
     it, t = 0, 0.0f0
     while t < Tf
        l1, l2, linf = compute_error(semi, t)
-       compute_dt!(semi, param)
-       adjust_time_step(ode, param, t)
+       dt = compute_dt!(semi, param)
+       dt = adjust_time_step(ode, param, dt, t)
        update_ghost_values!(cache, grid, boundary_conditions)
-       update_solution!(semi)
+       update_solution!(semi, dt)
 
        @show l1, l2, linf
-       t += dt[1]; it += 1
+       t += dt; it += 1
        @show t, dt, it
     end
     l1, l2, linf = compute_error(semi, t)
