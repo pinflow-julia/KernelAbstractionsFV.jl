@@ -39,7 +39,7 @@ Convert primitive to conservative variables for the Euler1D equations.
 function prim2cons(u, equations::Euler1D)
     (; gamma) = equations
     rho, v1, p = u
-    return (rho, rho*v1, p/(gamma-1) + 0.5f0*rho*v1^2)
+    return (rho, rho*v1, p/(gamma-1.0f0) + 0.5f0*rho*v1^2)
 end
 
 """
