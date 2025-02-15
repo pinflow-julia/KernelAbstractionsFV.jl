@@ -24,14 +24,21 @@ Abstract type for boundary conditions.
 """
 abstract type AbstractBoundaryCondition end
 
-"""
-    get_node_vars(u, equations, solver, indices...)
-
-Get the conservative variables specified indices as an SVector.
-"""
-@inline function get_node_vars(u, equations, solver::AbstractSpatialSolver, indices...)
-    # Copied from Trixi.jl
-    SVector(ntuple(@inline(v->u[v, indices...]), Val(nvariables(equations))))
+# Returns u[:, indices...] as an SVector. size(u, 1) should thus be
+# known at compile time in the caller and passed via Val()
+# (Taken from Benedict's fork of Trixi.jl)
+@inline function get_node_vars_gpu(u, ::Val{N}, indices...) where {N}
+    # There is a cut-off at `n == 10` inside of the method
+    # `ntuple(f::F, n::Integer) where F` in Base at ntuple.jl:17
+    # in Julia `v1.5`, leading to type instabilities if
+    # more than ten variables are used. That's why we use
+    # `Val(...)` below.
+    # We use `@inline` to make sure that the `getindex` calls are
+    # really inlined, which might be the default choice of the Julia
+    # compiler for standard `Array`s but not necessarily for more
+    # advanced array types such as `PtrArray`s, cf.
+    # https://github.com/JuliaSIMD/VectorizationBase.jl/issues/55
+    SVector(ntuple(@inline(v->u[v, indices...]), N))
 end
 
 """
@@ -84,8 +91,8 @@ function SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_con
     backend_kernel = KernelAbstractions.CPU(),
     cache = (;))
 
-    cache = (;cache..., create_cache(equations, grid, backend_kernel)...)
-    set_initial_value!(cache, grid, equations, initial_condition)
+    cache = (;cache..., create_cache(equations, grid, initial_condition, backend_kernel)...)
+
     SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition,
                                  boundary_conditions, solver, cache)
 end
@@ -147,7 +154,7 @@ function update_solution!(semi, dt)
     (; u, res) = cache
     res .= 0.0f0
     compute_residual!(semi)
-    @. u -= dt*res
+    u.parent .-= dt*res.parent # OffsetArrays work with broadcasting on GPU only with parent
 end
 
 """

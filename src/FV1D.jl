@@ -32,6 +32,21 @@ struct CartesianGrid1D{RealT <: Real, ArrayType1, ArrayType2}
                #         will not support nonuniform grids)
 end
 
+@kernel function linrange_kernel(start, stop, arr)
+    i = @index(Global, Linear)
+    N = length(arr)
+    arr[i] = start + (stop - start) * (i - 1) / (N - 1)
+end
+
+function gpu_linrange(start, stop, N, RealT, backend)
+    arr = KernelAbstractions.zeros(backend, RealT, N)  # GPU array
+    KernelAbstractions.synchronize(backend)
+
+    linrange_kernel(backend, 256)(start, stop, arr, ndrange=N)
+    KernelAbstractions.synchronize(backend)
+    return arr
+end
+
 """
     make_grid(domain::Tuple{<:Real, <:Real}, nx)
 
@@ -43,14 +58,20 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     @assert xmin < xmax
     println("Making uniform grid of interval [", xmin, ", ", xmax,"]")
     dx0 = (xmax - xmin)/nx
-    xc = LinRange(xmin+0.5f0*dx0, xmax-0.5f0*dx0, nx)
+    KernelAbstractions.synchronize(backend_kernel)
+
+    xc = gpu_linrange(xmin+0.5f0*dx0, xmax-0.5f0*dx0, nx, RealT, backend_kernel) # 2 dummy elements
+    KernelAbstractions.synchronize(backend_kernel)
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
     @printf("   dx                            = %e\n", dx0)
-    dx_ = dx0 .* ones(nx+2)
+    dx_ = dx0 .* KernelAbstractions.ones(backend_kernel, RealT, nx+2)
     dx = OffsetArray(dx_, OffsetArrays.Origin(0))
-    xf = LinRange(xmin, xmax, nx+1)
-    return CartesianGrid1D(domain, nx, collect(xc), collect(xf), dx, dx0)
+    KernelAbstractions.synchronize(backend_kernel)
+
+    xf = gpu_linrange(xmin, xmax, nx+1, RealT, backend_kernel)
+    KernelAbstractions.synchronize(backend_kernel)
+    return CartesianGrid1D(domain, nx, xc, xf, dx, dx0)
 end
 
 """
@@ -58,10 +79,10 @@ end
 
 Struct containing everything about the spatial discretization.
 """
-function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
+function create_cache(equations, grid::CartesianGrid1D, initial_condition, backend_kernel)
     nvar = nvariables(equations)
-    nx = grid.nx
-    RealT = eltype(grid.xc)
+    (; xc, nx) = grid
+    RealT = eltype(xc)
     # Allocating variables
 
     u_ = allocate(backend_kernel, RealT, nvar, nx+2)
@@ -76,6 +97,14 @@ function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
                                                             # error computation
     error_array = copy(exact_array) # Uses to store pointwise in error computation
 
+    # Put in initial value in u
+
+    KernelAbstractions.synchronize(backend_kernel)
+
+    set_initial_value_kernel!(backend_kernel)(
+        u, xc, equations, initial_condition, 0.0f0; ndrange = nx)
+        KernelAbstractions.synchronize(backend_kernel)
+
     cache = (; u, u_physical, speeds, res, Fn, exact_array, error_array, backend_kernel)
 
     return cache
@@ -86,34 +115,41 @@ end
 
 Compute the time step based on the CFL condition.
 """
+@kernel function compute_max_speed_kernel!(speeds, u,
+    equations::Union{Euler1D, CompressibleEulerEquations1D}, dx)
+    i = @index(Global, Linear)
+    nvar = Val(nvariables(equations))
+    u_node = get_node_vars_gpu(u, nvar, i)
+    local_speed = sum(max_abs_speeds(u_node, equations)) # Since Trixi equations return it
+                                                         # as a tuple of one element
+    speeds[i] = local_speed / dx[i]
+end
+
 function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param)
     (; grid, equations, solver, cache) = semi
-    (; u) = cache
-    (; dx) = grid
+    (; u, speeds, backend_kernel) = cache
     (; Ccfl) = param
+    (; dx) = grid
 
-    # Compute the maximum wave speed
-    max_speed = zero(eltype(u))
-    for i in 1:grid.nx
-        u_node = get_node_vars(u, equations, solver, i)
-        max_speed = max(max_abs_speeds(u_node, equations)[1] / dx[i], max_speed)
-    end
+    KernelAbstractions.synchronize(backend_kernel)
 
-    # Compute the time step
-    dt = Ccfl * 1.0f0 / max_speed
+    compute_max_speed_kernel!(backend_kernel, 256)(
+        speeds, u, equations, grid.dx; ndrange = grid.nx)
+    KernelAbstractions.synchronize(backend_kernel)
+
+    dt = Ccfl * 1.0f0 / maximum(speeds)
     return dt
 end
+
 
 """
     set_initial_value!(grid, equations, u, initial_value)
 
 Set the initial value of the solution.
 """
-function set_initial_value!(cache, grid::CartesianGrid1D, equations::AbstractEquations{1},
-                            initial_value)
-    nx = grid.nx
-    xc = grid.xc
+function set_initial_value!(cache, grid, equations::AbstractEquations{1}, initial_value)
     (; u) = cache
+    (; nx, xc) = grid
     for i=1:nx
         u[:,i] .= initial_value(xc[i], 0.0f0, equations)
     end
@@ -130,9 +166,9 @@ end
 
 Apply the left boundary condition.
 """
-function apply_left_bc!(cache, left::PeriodicBC, grid::CartesianGrid1D)
+@kernel function apply_left_bc_kernel!(cache, left::PeriodicBC, nx)
     (; u) = cache
-    u[:, 0] .= @views u[:, grid.nx]
+    u[:, 0] .= @views u[:, nx]
 end
 
 """
@@ -140,9 +176,9 @@ end
 
 Apply the right boundary condition.
 """
-function apply_right_bc!(cache, right::PeriodicBC, grid::CartesianGrid1D)
+@kernel function apply_right_bc_kernel!(cache, right::PeriodicBC, nx)
     (; u) = cache
-    u[:, grid.nx+1] .= @views u[:, 1]
+    u[:, nx+1] .= @views u[:, 1]
 end
 
 """
@@ -151,8 +187,15 @@ end
 Update the ghost values of the solution.
 """
 function update_ghost_values!(cache, grid::CartesianGrid1D, boundary_conditions::BoundaryConditions)
-    apply_left_bc!(cache, boundary_conditions.left, grid)
-    apply_right_bc!(cache, boundary_conditions.right, grid)
+    (; backend_kernel) = cache
+    # TODO - Passing grid instead of grid.nx gives an inbits error, indicating that the `grid`
+    # type has something which is not on GPU. This shouldn't happen because the grid has
+    # nothing that the cache doesn't have.
+    # https://github.com/JuliaGPU/CUDA.jl/issues/372
+    apply_left_bc_kernel!(backend_kernel, 256)(
+        cache, boundary_conditions.left, grid.nx, ndrange = 1)
+    apply_right_bc_kernel!(backend_kernel, 256)(
+        cache, boundary_conditions.right, grid.nx, ndrange = 1)
 end
 
 """
@@ -183,40 +226,50 @@ end
 Compute the residual of the solution.
 """ # TODO - Dispatch for 1D. The fact that it doesn't work indicates a bug in julia.
 function compute_residual!(semi)
-
     compute_surface_fluxes!(semi)
     update_rhs!(semi)
-
 end
 
 function update_rhs!(semi)
 
-    (; grid, equations, surface_flux, solver, cache) = semi
-    (; nx, dx, xf) = grid
-    (; u, Fn, res) = cache
+    (; grid, equations, solver, cache) = semi
+    (; nx, dx) = grid
+    (; Fn, res, backend_kernel) = cache
     # TODO: Is 256 an optimal workgroup size?
-    update_rhs_kernel!(get_backend(u),256)(Fn, res, equations, solver, dx; ndrange = nx)
+    KernelAbstractions.synchronize(backend_kernel)
+    update_rhs_kernel!(backend_kernel,256)(Fn, res, equations, solver, dx; ndrange = nx)
+    KernelAbstractions.synchronize(backend_kernel)
 end
 
 @kernel function update_rhs_kernel!(Fn, res, equations, solver, dx)
     i = @index(Global, Linear)
-        fn_rr = get_node_vars(Fn, equations, solver, i+1)
-        fn_ll = get_node_vars(Fn, equations, solver, i)
-        res[:, i] .+= (fn_rr - fn_ll)/ dx[i]
+    nvar = Val(nvariables(equations))
+    fn_rr = get_node_vars_gpu(Fn, nvar, i+1)
+    fn_ll = get_node_vars_gpu(Fn, nvar, i)
+
+    rhs = (fn_rr - fn_ll)/ dx[i]
+    res[:, i] .= rhs
 end
 
 function compute_surface_fluxes!(semi)
 
     (; grid, equations, surface_flux, solver, cache) = semi
-    (; nx, dx, xf) = grid
-    (; u, Fn, res) = cache
+    (; nx) = grid
+    (; u, Fn, backend_kernel) = cache
     # TODO: Is 256 an optimal workgroup size?
-    compute_surface_fluxes_kernel!(get_backend(u), 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
-
+    KernelAbstractions.synchronize(backend_kernel)
+    compute_surface_fluxes_kernel!(backend_kernel, 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
+    KernelAbstractions.synchronize(backend_kernel)
 end
 
 @kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux)
     i = @index(Global, Linear)
-        ul, ur = get_node_vars(u, equations, solver, i-1), get_node_vars(u, equations, solver, i)
-        Fn[:, i] .= surface_flux(ul, ur, 1, equations)
+
+    nvar = Val(nvariables(equations))
+
+    ul = get_node_vars_gpu(u, nvar, i-1)
+    ur = get_node_vars_gpu(u, nvar, i)
+
+    fn = surface_flux(ul, ur, 1, equations)
+    Fn[:, i] .= fn
 end
