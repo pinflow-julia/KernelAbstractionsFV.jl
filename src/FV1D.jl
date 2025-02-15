@@ -65,7 +65,6 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
 
     xc = gpu_linrange(xmin+0.5f0*dx0, xmax-0.5f0*dx0, nx, RealT, backend_kernel) # 2 dummy elements
     KernelAbstractions.synchronize(backend_kernel)
-    xc_physical = xc
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
     @printf("   dx                            = %e\n", dx0)
@@ -76,7 +75,7 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
 
     xf = gpu_linrange(xmin, xmax, nx+1, RealT, backend_kernel)
     KernelAbstractions.synchronize(backend_kernel)
-    return CartesianGrid1D(domain, nx, xc, xc_physical, xf, dx, dx0)
+    return CartesianGrid1D(domain, nx, xc, xf, dx, dx0)
 end
 
 """
@@ -204,9 +203,7 @@ function compute_error(semi, t)
     (; grid, equations, initial_condition, cache) = semi
     (; exact_array, error_array, backend_kernel, u_physical) = cache
     (; nx, xc, dx0) = grid
-
-    KernelAbstractions.synchronize(backend_kernel)
-
+    
     KernelAbstractions.synchronize(backend_kernel)
 
     set_initial_value_kernel!(backend_kernel, 256)(
