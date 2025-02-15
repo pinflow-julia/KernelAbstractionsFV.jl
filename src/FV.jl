@@ -24,8 +24,6 @@ Abstract type for boundary conditions.
 """
 abstract type AbstractBoundaryCondition end
 
-using GPUArraysCore
-
 # Returns u[:, indices...] as an SVector. size(u, 1) should thus be
 # known at compile time in the caller and passed via Val()
 # (Taken from Benedict's fork of Trixi.jl)
@@ -125,6 +123,11 @@ struct Parameters{RealT <: Real}
     Ccfl::RealT
     save_time_interval::RealT
 end
+"""
+Valentin's workaround from JuliaCon 2021
+
+"""
+Base.Broadcast.BroadcastStyle(::Type{<:OffsetArray{<:Any, <:Any, AA}}) where AA = Base.Broadcast.BroadcastStyle(AA)
 
 """
     adjust_time_step(problem, param, dt, t)
@@ -163,7 +166,7 @@ function update_solution!(semi, dt)
     (; u, res) = cache
     res .= 0.0f0
     compute_residual!(semi)
-    u.parent .-= dt*res.parent # OffsetArrays work with broadcasting on GPU only with parent
+    u .-= dt*res # OffsetArrays work with broadcasting on GPU only with parent
 end
 
 """

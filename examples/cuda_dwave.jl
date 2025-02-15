@@ -1,0 +1,33 @@
+using KernelAbstractionsFV
+using CUDA
+
+
+RealT = Float32
+domain = (0.0f0, 1.0f0)
+nx = 30
+backend_kernel = CUDABackend()
+# backend_kernel = CPU()
+
+grid = make_grid(domain, nx, backend_kernel)
+equations = Euler1D(1.4f0)
+
+function initial_condition_dwave(x, t, equations::Euler1D)
+    RealT = eltype(x)
+    rho = map(RealT, 2.0f0 + 0.2f0*sin(2.0f0*pi*(x - 0.1f0*t)))
+    v1 = 0.1f0
+    p = 1.0f0
+    return prim2cons((rho, v1, p), equations)
+end
+surface_flux = flux_rusanov
+semi = SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition_dwave,
+                                    backend_kernel = backend_kernel
+                                    )
+tspan = map(RealT, (0.0, 0.1))
+ode = ODE(semi, tspan)
+Ccfl = map(RealT, 0.9)
+save_time_interval = map(RealT, 0.0)
+param = Parameters(Ccfl, save_time_interval)
+
+sol = solve(ode, param)
+
+@show sol.l1, sol.l2
