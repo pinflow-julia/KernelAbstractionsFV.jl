@@ -43,7 +43,7 @@ end
 
 function gpu_linrange(start, stop, N, RealT, backend)
     arr = KernelAbstractions.zeros(backend, RealT, N)  # GPU array
-    kernel = linrange_kernel(backend, N)  
+    kernel = linrange_kernel(backend, N)
     KernelAbstractions.synchronize(backend)
     # Define kernel
     kernel(start, stop, arr, ndrange=N)                # Launch kernel
@@ -91,12 +91,13 @@ function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
     RealT = eltype(grid.xc)
     # Allocating variables
 
-    u_ = KernelAbstractions.zeros(backend_kernel, RealT, nvar, nx+2)
-    # u = OffsetArray(u_, OffsetArrays.Origin(1, 0))
+    u_ = allocate(backend_kernel, RealT, nvar, nx+2)
+
     u_physical = @view u_[:, 2:end-1]
     u = u_
     res = copy(u) # dU/dt + res(U) = 0
     Fn = copy(u) # numerical flux
+    Fn .= 0.0f0
     speeds = KernelAbstractions.zeros(backend_kernel, RealT, nx+2) # Wave speed estimate at each point for
                                                    # taking the maximum
     exact_array = KernelAbstractions.zeros(backend_kernel, RealT, nvar, nx) # Used to store exact solution in
