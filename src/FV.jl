@@ -166,7 +166,8 @@ function update_solution!(semi, dt)
     (; u, res) = cache
     res .= 0.0f0
     compute_residual!(semi)
-    u .-= dt*res # OffsetArrays work with broadcasting on GPU only with parent
+
+    u .-= dt*res 
 end
 
 """
