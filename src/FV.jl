@@ -99,7 +99,7 @@ function SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_con
     KernelAbstractions.synchronize(backend_kernel)
 
     set_initial_value_kernel!(backend_kernel)(
-        cache.u, grid.xc, equations, initial_condition, 0.0f0; ndrange = grid.nx+2)
+        cache.u, grid.xc, equations, initial_condition, 0.0f0; ndrange = grid.nx)
         KernelAbstractions.synchronize(backend_kernel)
 
     SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition,
@@ -163,7 +163,7 @@ function update_solution!(semi, dt)
     (; u, res) = cache
     res .= 0.0f0
     compute_residual!(semi)
-    u .-= dt*res
+    u.parent .-= dt*res.parent # OffsetArrays work with broadcasting on GPU only with parent
 end
 
 """
