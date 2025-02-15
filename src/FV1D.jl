@@ -66,8 +66,7 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
     @printf("   dx                            = %e\n", dx0)
     dx_ = dx0 .* KernelAbstractions.ones(backend_kernel, RealT, nx+2)
-    dx = OffsetArray(dx_, OffsetArrays.Origin(0)) # TODO - This doesn't work with GPU
-    # dx = dx_
+    dx = OffsetArray(dx_, OffsetArrays.Origin(0))
     KernelAbstractions.synchronize(backend_kernel)
 
     xf = gpu_linrange(xmin, xmax, nx+1, RealT, backend_kernel)
