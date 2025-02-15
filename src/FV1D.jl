@@ -1,4 +1,3 @@
-using Atomix
 using KernelAbstractions
 """
     BoundaryConditions
@@ -120,7 +119,7 @@ Compute the time step based on the CFL condition.
     u_node = SVector(u[1, i], u[2, i], u[3, i])
     local_speed = sum(max_abs_speeds(u_node, equations)) # Since Trixi equations return it
                                                          # as a tuple of one element
-     Atomix.@atomic speeds[i] = local_speed / dx[i]
+     speeds[i] = local_speed / dx[i]
 end
 
 function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param)
@@ -149,7 +148,7 @@ Set the initial value of the solution.
     i = @index(Global, Linear)
     var = initial_value(xc[i], t, equations)
     for k = 1:3
-   Atomix.@atomic u[k,i] = var[k]
+     u[k,i] = var[k]
     end
 end
 
