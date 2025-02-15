@@ -1,11 +1,12 @@
 using KernelAbstractionsFV
-using AMDGPU
-
+using Trixi
+using Metal
+using KernelAbstractions
 
 RealT = Float32
 domain = (0.0f0, 1.0f0)
-nx = 30
-backend_kernel = ROCBackend()
+nx = 80
+backend_kernel = MetalBackend()
 # backend_kernel = CPU()
 
 grid = make_grid(domain, nx, backend_kernel)
