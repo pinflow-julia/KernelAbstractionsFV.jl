@@ -117,7 +117,8 @@ Compute the time step based on the CFL condition.
 @kernel function compute_max_speed_kernel!(speeds, u,
     equations::Union{Euler1D, CompressibleEulerEquations1D}, dx)
     i = @index(Global, Linear)
-    u_node = SVector(u[1, i], u[2, i], u[3, i])
+    nvar = Val(nvariables(equations))
+    u_node = get_node_vars_gpu(u, nvar, i)
     local_speed = sum(max_abs_speeds(u_node, equations)) # Since Trixi equations return it
                                                          # as a tuple of one element
      speeds[i] = local_speed / dx[i]
