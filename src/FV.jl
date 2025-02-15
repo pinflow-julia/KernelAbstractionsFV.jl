@@ -24,9 +24,6 @@ Abstract type for boundary conditions.
 """
 abstract type AbstractBoundaryCondition end
 
-using GPUArraysCore
-
-
 # Returns u[:, indices...] as an SVector. size(u, 1) should thus be
 # known at compile time in the caller and passed via Val()
 # (Taken from Benedict's fork of Trixi.jl)
@@ -97,8 +94,12 @@ function SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_con
     cache = (;cache..., create_cache(equations, grid, backend_kernel)...)
     # set_initial_value!(cache, grid, equations, initial_condition)
     # TODO - This works only for 1-D!
+    KernelAbstractions.synchronize(backend_kernel)
+
     set_initial_value_kernel!(backend_kernel)(
-        cache.u, grid.xc, equations, initial_condition, 0.0f0; ndrange = grid.nx+2)
+        cache.u, grid.xc, equations, initial_condition, 0.0f0; ndrange = grid.nx)
+        KernelAbstractions.synchronize(backend_kernel)
+
     SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition,
                                  boundary_conditions, solver, cache)
 end
@@ -160,7 +161,7 @@ function update_solution!(semi, dt)
     (; u, res) = cache
     res .= 0.0f0
     compute_residual!(semi)
-    u .-= dt*res
+    u.parent .-= dt*res.parent # OffsetArrays work with broadcasting on GPU only with parent
 end
 
 """

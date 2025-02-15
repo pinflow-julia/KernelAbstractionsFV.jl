@@ -1,6 +1,5 @@
 using KernelAbstractionsFV
 using Trixi
-using Metal
 using KernelAbstractions
 
 RealT = Float32
