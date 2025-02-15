@@ -251,17 +251,6 @@ end
     res[:, i] .= rhs
 end
 
-@kernel function update_rhs_kernel!(Fn, res,
-    equations::Union{CompressibleEulerEquations1D, Euler1D}, solver, dx)
-    i = @index(Global, Linear)
-
-    nvar = Val(nvariables(equations))
-    fn_rr = get_node_vars_gpu(Fn, nvar, i+1)
-    fn_ll = get_node_vars_gpu(Fn, nvar, i)
-    rhs = (fn_rr - fn_ll)/ dx[i]
-    res[:, i] .= rhs
-end
-
 function compute_surface_fluxes!(semi)
 
     (; grid, equations, surface_flux, solver, cache) = semi
