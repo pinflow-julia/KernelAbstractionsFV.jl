@@ -1,6 +1,5 @@
 using KernelAbstractionsFV
 using KernelAbstractions
-using AMDGPU
 
 RealT = Float32
 domain = (0.0f0, 1.0f0)
