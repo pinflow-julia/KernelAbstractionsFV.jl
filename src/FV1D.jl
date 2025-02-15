@@ -226,17 +226,15 @@ end
 Compute the residual of the solution.
 """ # TODO - Dispatch for 1D. The fact that it doesn't work indicates a bug in julia.
 function compute_residual!(semi)
-
     compute_surface_fluxes!(semi)
     update_rhs!(semi)
-
 end
 
 function update_rhs!(semi)
 
-    (; grid, equations, surface_flux, solver, cache) = semi
-    (; nx, dx, xf) = grid
-    (; u, Fn, res, backend_kernel) = cache
+    (; grid, equations, solver, cache) = semi
+    (; nx, dx) = grid
+    (; Fn, res, backend_kernel) = cache
     # TODO: Is 256 an optimal workgroup size?
     KernelAbstractions.synchronize(backend_kernel)
     update_rhs_kernel!(backend_kernel,256)(Fn, res, equations, solver, dx; ndrange = nx)
@@ -267,8 +265,8 @@ end
 function compute_surface_fluxes!(semi)
 
     (; grid, equations, surface_flux, solver, cache) = semi
-    (; nx, dx, xf) = grid
-    (; u, Fn, res, backend_kernel) = cache
+    (; nx) = grid
+    (; u, Fn, backend_kernel) = cache
     # TODO: Is 256 an optimal workgroup size?
     KernelAbstractions.synchronize(backend_kernel)
     compute_surface_fluxes_kernel!(backend_kernel, 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
@@ -278,15 +276,6 @@ end
 @kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux)
     i = @index(Global, Linear)
 
-    ul = get_node_vars(u, equations, solver, i-1)
-    ur = get_node_vars(u, equations, solver, i)
-    fn = surface_flux(ul, ur, 1, equations)
-    Fn[:, i] .= fn
-end
-
-@kernel function compute_surface_fluxes_kernel!(
-    Fn, u, equations::Union{CompressibleEulerEquations1D, Euler1D}, solver, surface_flux)
-    i = @index(Global, Linear)
     nvar = Val(nvariables(equations))
 
     ul = get_node_vars_gpu(u, nvar, i-1)
