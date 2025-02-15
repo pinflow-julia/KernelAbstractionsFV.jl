@@ -33,20 +33,17 @@ struct CartesianGrid1D{RealT <: Real, ArrayType1, ArrayType2}
 end
 
 @kernel function linrange_kernel(start, stop, arr)
-    i = @index(Global)
+    i = @index(Global, Linear)
     N = length(arr)
-    if i ≤ N
-        arr[i] = start + (stop - start) * (i - 1) / (N - 1)
-    end
+    arr[i] = start + (stop - start) * (i - 1) / (N - 1)
 end
 
 function gpu_linrange(start, stop, N, RealT, backend)
     arr = KernelAbstractions.zeros(backend, RealT, N)  # GPU array
-    kernel = linrange_kernel(backend, N)
     KernelAbstractions.synchronize(backend)
-    # Define kernel
-    kernel(start, stop, arr, ndrange=N)                # Launch kernel
-    KernelAbstractions.synchronize(backend)            # Sync to ensure execution is complete
+
+    linrange_kernel(backend, 256)(start, stop, arr, ndrange=N)
+    KernelAbstractions.synchronize(backend)
     return arr
 end
 
@@ -203,7 +200,7 @@ function compute_error(semi, t)
     (; grid, equations, initial_condition, cache) = semi
     (; exact_array, error_array, backend_kernel, u_physical) = cache
     (; nx, xc, dx0) = grid
-    
+
     KernelAbstractions.synchronize(backend_kernel)
 
     set_initial_value_kernel!(backend_kernel, 256)(
