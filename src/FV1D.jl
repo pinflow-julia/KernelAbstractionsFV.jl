@@ -43,7 +43,9 @@ end
 
 function gpu_linrange(start, stop, N, RealT, backend)
     arr = KernelAbstractions.zeros(backend, RealT, N)  # GPU array
-    kernel = linrange_kernel(backend, N)               # Define kernel
+    kernel = linrange_kernel(backend, N)  
+    KernelAbstractions.synchronize(backend)
+    # Define kernel
     kernel(start, stop, arr, ndrange=N)                # Launch kernel
     KernelAbstractions.synchronize(backend)            # Sync to ensure execution is complete
     return arr
@@ -60,6 +62,8 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     @assert xmin < xmax
     println("Making uniform grid of interval [", xmin, ", ", xmax,"]")
     dx0 = (xmax - xmin)/nx
+    KernelAbstractions.synchronize(backend_kernel)
+
     xc = gpu_linrange(xmin-0.5f0*dx0, xmax+0.5f0*dx0, nx+2, RealT, backend_kernel) # 2 dummy elements
     KernelAbstractions.synchronize(backend_kernel)
     xc_physical = @view xc[2:end-1]
@@ -69,6 +73,8 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     dx_ = dx0 .* KernelAbstractions.ones(backend_kernel, RealT, nx+2)
     # dx = OffsetArray(dx_, OffsetArrays.Origin(0)) # TODO - This doesn't work with GPU
     dx = dx_
+    KernelAbstractions.synchronize(backend_kernel)
+
     xf = gpu_linrange(xmin-dx0, xmax+dx0, nx+3, RealT, backend_kernel)
     KernelAbstractions.synchronize(backend_kernel)
     return CartesianGrid1D(domain, nx, xc, xc_physical, xf, dx, dx0)
@@ -85,15 +91,15 @@ function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
     RealT = eltype(grid.xc)
     # Allocating variables
 
-    u_ = allocate(backend_kernel, RealT, nvar, nx+2)
+    u_ = KernelAbstractions.zeros(backend_kernel, RealT, nvar, nx+2)
     # u = OffsetArray(u_, OffsetArrays.Origin(1, 0))
     u_physical = @view u_[:, 2:end-1]
     u = u_
     res = copy(u) # dU/dt + res(U) = 0
     Fn = copy(u) # numerical flux
-    speeds = allocate(backend_kernel, RealT, nx+2) # Wave speed estimate at each point for
+    speeds = KernelAbstractions.zeros(backend_kernel, RealT, nx+2) # Wave speed estimate at each point for
                                                    # taking the maximum
-    exact_array = allocate(backend_kernel, RealT, nvar, nx) # Used to store exact solution in
+    exact_array = KernelAbstractions.zeros(backend_kernel, RealT, nvar, nx) # Used to store exact solution in
                                                             # error computation
     error_array = copy(exact_array) # Uses to store pointwise in error computation
 
@@ -113,7 +119,7 @@ Compute the time step based on the CFL condition.
     u_node = SVector(u[1, i], u[2, i], u[3, i])
     local_speed = sum(max_abs_speeds(u_node, equations)) # Since Trixi equations return it
                                                          # as a tuple of one element
-    speeds[i] = local_speed / dx[i]
+     speeds[i] = local_speed / dx[i]
 end
 
 function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param)
@@ -121,6 +127,8 @@ function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, para
     (; u, speeds, backend_kernel) = cache
     (; Ccfl) = param
     (; dx) = grid
+
+    KernelAbstractions.synchronize(backend_kernel)
 
     compute_max_speed_kernel!(backend_kernel, 256)(
         speeds, u, equations, grid.dx; ndrange = grid.nx+2)
@@ -138,7 +146,10 @@ Set the initial value of the solution.
 @kernel function set_initial_value_kernel!(u, xc, equations::AbstractEquations{1},
                                            initial_value, t)
     i = @index(Global, Linear)
-    u[:,i] .= initial_value(xc[i], t, equations)
+    var = initial_value(xc[i], t, equations)
+    for k = 1:3
+     u[k,i] = var[k]
+    end
 end
 
 """
@@ -181,8 +192,10 @@ function compute_error(semi, t)
     (; exact_array, error_array, backend_kernel, u_physical) = cache
     (; nx, xc_physical, dx0) = grid
 
+    KernelAbstractions.synchronize(backend_kernel)
+
     set_initial_value_kernel!(backend_kernel, 256)(
-        exact_array, xc_physical, equations, initial_condition, t, ndrange = nx)
+    exact_array, xc_physical, equations, initial_condition, t, ndrange = nx)
     KernelAbstractions.synchronize(backend_kernel)
     error_array .= abs.(u_physical .- exact_array) # TODO - Does this have auto-sync?
     error_l1 = sum(error_array * dx0)
@@ -209,14 +222,16 @@ function update_rhs!(semi)
     (; nx, dx, xf) = grid
     (; u, Fn, res, backend_kernel) = cache
     # TODO: Is 256 an optimal workgroup size?
+    KernelAbstractions.synchronize(backend_kernel)
     update_rhs_kernel!(backend_kernel,256)(Fn, res, equations, solver, dx; ndrange = nx+1)
     KernelAbstractions.synchronize(backend_kernel)
 end
 
 @kernel function update_rhs_kernel!(Fn, res, equations, solver, dx)
     i = @index(Global, Linear)
-    fn_rr = get_node_vars(Fn, equations, solver, i+1)
-    fn_ll = get_node_vars(Fn, equations, solver, i)
+    nvar = Val(nvariables(equations))
+    fn_rr = get_node_vars_gpu(Fn, nvar, i+1)
+    fn_ll = get_node_vars_gpu(Fn, nvar, i)
 
     rhs = (fn_rr - fn_ll)/ dx[i]
     res[:, i+1] .= rhs
@@ -239,6 +254,7 @@ function compute_surface_fluxes!(semi)
     (; nx, dx, xf) = grid
     (; u, Fn, res, backend_kernel) = cache
     # TODO: Is 256 an optimal workgroup size?
+    KernelAbstractions.synchronize(backend_kernel)
     compute_surface_fluxes_kernel!(backend_kernel, 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
     KernelAbstractions.synchronize(backend_kernel)
 end

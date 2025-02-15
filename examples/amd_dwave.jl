@@ -1,6 +1,7 @@
 using KernelAbstractionsFV
 using AMDGPU
 
+
 RealT = Float32
 domain = (0.0f0, 1.0f0)
 nx = 30
