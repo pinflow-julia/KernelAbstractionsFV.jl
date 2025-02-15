@@ -91,14 +91,7 @@ function SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_con
     backend_kernel = KernelAbstractions.CPU(),
     cache = (;))
 
-    cache = (;cache..., create_cache(equations, grid, backend_kernel)...)
-    # set_initial_value!(cache, grid, equations, initial_condition)
-    # TODO - This works only for 1-D!
-    KernelAbstractions.synchronize(backend_kernel)
-
-    set_initial_value_kernel!(backend_kernel)(
-        cache.u, grid.xc, equations, initial_condition, 0.0f0; ndrange = grid.nx)
-        KernelAbstractions.synchronize(backend_kernel)
+    cache = (;cache..., create_cache(equations, grid, initial_condition, backend_kernel)...)
 
     SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition,
                                  boundary_conditions, solver, cache)

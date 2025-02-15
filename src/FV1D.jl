@@ -80,10 +80,10 @@ end
 
 Struct containing everything about the spatial discretization.
 """
-function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
+function create_cache(equations, grid::CartesianGrid1D, initial_condition, backend_kernel)
     nvar = nvariables(equations)
-    nx = grid.nx
-    RealT = eltype(grid.xc)
+    (; xc, nx) = grid
+    RealT = eltype(xc)
     # Allocating variables
 
     u_ = allocate(backend_kernel, RealT, nvar, nx+2)
@@ -97,6 +97,14 @@ function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
     exact_array = KernelAbstractions.zeros(backend_kernel, RealT, nvar, nx) # Used to store exact solution in
                                                             # error computation
     error_array = copy(exact_array) # Uses to store pointwise in error computation
+
+    # Put in initial value in u
+
+    KernelAbstractions.synchronize(backend_kernel)
+
+    set_initial_value_kernel!(backend_kernel)(
+        u, xc, equations, initial_condition, 0.0f0; ndrange = nx)
+        KernelAbstractions.synchronize(backend_kernel)
 
     cache = (; u, u_physical, speeds, res, Fn, exact_array, error_array, backend_kernel)
 
