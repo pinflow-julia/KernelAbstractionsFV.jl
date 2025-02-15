@@ -66,10 +66,17 @@ function create_cache(equations, grid::CartesianGrid1D, backend_kernel)
 
     u_ = allocate(backend_kernel, RealT, nvar, nx+2)
     u = OffsetArray(u_, OffsetArrays.Origin(1, 0))
+    u_physical = @view u[:, 1:nx]
     res = copy(u) # dU/dt + res(U) = 0
     Fn = copy(u) # numerical flux
+    Fn .= 0.0f0
+    speeds = KernelAbstractions.zeros(backend_kernel, RealT, nx) # Wave speed estimate at each point for
+                                                   # taking the maximum
+    exact_array = KernelAbstractions.zeros(backend_kernel, RealT, nvar, nx) # Used to store exact solution in
+                                                            # error computation
+    error_array = copy(exact_array) # Uses to store pointwise in error computation
 
-    cache = (; u, res, Fn, backend_kernel)
+    cache = (; u, u_physical, speeds, res, Fn, exact_array, error_array, backend_kernel)
 
     return cache
 end
@@ -112,6 +119,12 @@ function set_initial_value!(cache, grid::CartesianGrid1D, equations::AbstractEqu
     end
 end
 
+@kernel function set_initial_value_kernel!(u, xc, equations::AbstractEquations{1},
+                                           initial_value, t)
+    i = @index(Global, Linear)
+    u[:, i] .= initial_value(xc[i], t, equations)
+end
+
 """
     apply_left_bc!(grid, left, cache)
 
@@ -149,18 +162,18 @@ Compute the error of the solution.
 """
 function compute_error(semi, t)
     (; grid, equations, initial_condition, cache) = semi
-    (; u) = cache
-    error_l2, error_l1, error_linf = (zero(eltype(u)) for _=1:3)
-    (; nx, dx, xc) = grid
-    for i=1:nx
-       u_   = u[1, i]
-       u_exact = initial_condition(xc[i], t, equations)
-       error = abs(u_ - u_exact[1])
-       error_l1 += error   * dx[i]
-       error_l2 += error^2 * dx[i]
-       error_linf = max(error_linf, error)
-    end
-    error_l2 = sqrt(error_l2)
+    (; exact_array, error_array, backend_kernel, u_physical) = cache
+    (; nx, xc, dx0) = grid
+
+    KernelAbstractions.synchronize(backend_kernel)
+
+    set_initial_value_kernel!(backend_kernel, 256)(
+    exact_array, xc, equations, initial_condition, t, ndrange = nx)
+    KernelAbstractions.synchronize(backend_kernel)
+    error_array .= abs.(u_physical .- exact_array) # TODO - Does this have auto-sync?
+    error_l1 = sum(error_array * dx0)
+    error_l2 = sqrt.(sum(error_array.^2 * dx0))
+    error_linf = maximum(error_array)
     return error_l1, error_l2, error_linf
 end
 
