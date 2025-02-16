@@ -4,7 +4,7 @@ using TrixiBase
 using Test
 using Metal
 
-@testset "Density wave CPU tests" begin
+@testset "Density wave GPU tests" begin
     tspan = (0.0f0, 0.001f0)
     nx = 10
     trixi_include(joinpath(examples_dir, "run_dwave.jl"), tspan = tspan, nx = nx,
