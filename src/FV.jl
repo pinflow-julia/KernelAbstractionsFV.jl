@@ -161,7 +161,7 @@ function update_solution!(semi, dt)
     (; backend_kernel) = cache
     #! format: noindent
     (; u, res) = cache
-    @. res = 0.0f0        
+    @. res = 0.0f0
     compute_residual!(semi)
     @. u.parent -= dt*res.parent # OffsetArrays work with broadcasting on GPU only with parent
     end

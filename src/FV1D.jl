@@ -368,7 +368,7 @@ end
     fn_ll = get_node_vars_gpu(Fn, nvar, i)
 
     rhs = (fn_rr - fn_ll)/ dx[i]
-    loop_over_variables!(res, rhs, nvar, i)
+    set_node_vars!(res, rhs, nvar, i)
 end
 
 function compute_surface_fluxes!(semi, backend_kernel::MyCPU)
@@ -396,7 +396,7 @@ function compute_surface_fluxes!(semi, backend_kernel::Union{CPU, GPU})
     (; u, Fn, backend_kernel, workgroup_size) = cache
     @timeit cache_cpu_only.timer "compute_surface_fluxes!" begin
     #! format: noindent
-    
+
     nvar = Val(nvariables(equations))
     KernelAbstractions.synchronize(backend_kernel)
     compute_surface_fluxes_kernel!(backend_kernel, workgroup_size)(Fn, u, equations, solver,
@@ -409,17 +409,16 @@ end
 @kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux, @Const(nvar))
     i = @index(Global, Linear)
 
-    
+
     ul = get_node_vars_gpu(u, nvar, i-1)
     ur = get_node_vars_gpu(u, nvar, i)
 
     fn = surface_flux(ul, ur, 1, equations)
-    loop_over_variables!(Fn, fn, nvar, i)
+    set_node_vars!(Fn, fn, nvar, i)
 end
 
-
-@inline function loop_over_variables!(x, y, ::Val{N}, indices...) where {N}
-        for k in 1:N
-         x[k,indices...] = y[k]
-        end
+@inline function set_node_vars!(x, y, ::Val{N}, indices...) where {N}
+    for k in 1:N
+        x[k,indices...] = y[k]
+    end
 end
