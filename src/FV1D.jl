@@ -125,7 +125,7 @@ Compute the time step based on the CFL condition.
     speeds[i] = local_speed / dx[i]
 end
 
-function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param)
+function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param, backend_kernel)
     (; grid, equations, solver, cache, cache_cpu_only) = semi
     (; u, speeds, backend_kernel, workgroup_size) = cache
     (; Ccfl) = param
@@ -185,7 +185,8 @@ end
 Update the ghost values of the solution.
 """
 function update_ghost_values!(cache, cache_cpu_only, grid::CartesianGrid1D,
-                              boundary_conditions::BoundaryConditions)
+                              boundary_conditions::BoundaryConditions,
+                              backend_kernel)
     @timeit cache_cpu_only.timer "update_ghost_values!" begin
     #! format: noindent
     (; backend_kernel, workgroup_size) = cache
@@ -205,7 +206,7 @@ end
 
 Compute the error of the solution.
 """
-function compute_error(semi, t)
+function compute_error(semi, t, backend_kernel)
     (; grid, equations, initial_condition, cache, cache_cpu_only) = semi
     (; exact_array, error_array, backend_kernel, u_physical, workgroup_size) = cache
     (; nx, xc, dx0) = grid
@@ -228,21 +229,7 @@ function compute_error(semi, t)
     end # timer
 end
 
-"""
-    compute_residual!(semi)
-
-Compute the residual of the solution.
-""" # TODO - Dispatch for 1D. The fact that it doesn't work indicates a bug in julia.
-function compute_residual!(semi)
-    (; cache_cpu_only) = semi
-    @timeit cache_cpu_only.timer "compute_residual!" begin
-    #! format: noindent
-    compute_surface_fluxes!(semi)
-    update_rhs!(semi)
-    end # timer
-end
-
-function update_rhs!(semi)
+function update_rhs!(semi, backend_kernel)
     (; cache, cache_cpu_only) = semi
     @timeit cache_cpu_only.timer "update_rhs!" begin
     #! format: noindent
@@ -269,7 +256,7 @@ end
     res[:, i] .= rhs
 end
 
-function compute_surface_fluxes!(semi)
+function compute_surface_fluxes!(semi, backend_kernel)
     (; grid, equations, surface_flux, solver, cache, cache_cpu_only) = semi
     (; nx) = grid
     (; u, Fn, backend_kernel, workgroup_size) = cache

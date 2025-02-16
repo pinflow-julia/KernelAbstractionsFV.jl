@@ -158,11 +158,26 @@ Update the solution using the explicit method.
 function update_solution!(semi, dt)
     (; cache, cache_cpu_only) = semi
     @timeit cache_cpu_only.timer "update_solution!" begin
+    (; backend_kernel) = cache
     #! format: noindent
     (; u, res) = cache
     @. res = 0.0f0
-    compute_residual!(semi)
+    compute_residual!(semi, backend_kernel)
     @. u.parent -= dt*res.parent # OffsetArrays work with broadcasting on GPU only with parent
+    end # timer
+end
+
+"""
+    compute_residual!(semi)
+
+Compute the residual of the solution.
+""" # TODO - Dispatch for 1D. The fact that it doesn't work indicates a bug in julia.
+function compute_residual!(semi, backend_kernel)
+    (; cache_cpu_only) = semi
+    @timeit cache_cpu_only.timer "compute_residual!" begin
+    #! format: noindent
+    compute_surface_fluxes!(semi, backend_kernel)
+    update_rhs!(semi, backend_kernel)
     end # timer
 end
 
@@ -174,23 +189,24 @@ Solve the conservation law.
 function solve(ode::ODE, param::Parameters; maxiters = nothing)
     (; semi, tspan) = ode
     (; grid, cache, cache_cpu_only, boundary_conditions) = semi
+    (; backend_kernel) = cache
     @timeit cache_cpu_only.timer "solve" begin
     #! format: noindent
     Tf = tspan[2]
 
     it, t = 0, 0.0f0
     while t < Tf
-       l1, l2, linf = compute_error(semi, t)
-       dt = compute_dt!(semi, param)
+       l1, l2, linf = compute_error(semi, t, backend_kernel)
+       dt = compute_dt!(semi, param, backend_kernel)
        dt = adjust_time_step(ode, param, dt, t)
-       update_ghost_values!(cache, cache_cpu_only, grid, boundary_conditions)
+       update_ghost_values!(cache, cache_cpu_only, grid, boundary_conditions, backend_kernel)
        update_solution!(semi, dt)
 
        @show l1, l2, linf
        t += dt; it += 1
        @show t, dt, it
     end
-    l1, l2, linf = compute_error(semi, t)
+    l1, l2, linf = compute_error(semi, t, backend_kernel)
 
     sol = (; cache.u, semi, l1, l2, linf)
     end # timer
