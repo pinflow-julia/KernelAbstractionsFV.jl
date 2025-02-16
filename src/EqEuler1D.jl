@@ -52,7 +52,7 @@ function cons2prim(u, equations::Euler1D)
     rho, rho_v1, E = u
     v1 = rho_v1 / rho
     p = (gamma-1.0f0) * (E - 0.5f0*rho*v1^2)
-    return (rho, v1, p)
+    return SVector(rho, v1, p)
 end
 
 """

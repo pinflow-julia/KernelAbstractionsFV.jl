@@ -217,7 +217,7 @@ function compute_error(semi, t)
     set_initial_value_kernel!(backend_kernel, workgroup_size)(
         exact_array, xc, equations, initial_condition, t, ndrange = nx)
     KernelAbstractions.synchronize(backend_kernel)
-    @. error_array = abs.(u_physical .- exact_array) # TODO - Does this have auto-sync?
+    @. error_array = abs(u_physical - exact_array) # TODO - Does this have auto-sync?
     error_l1 = sum(error_array * dx0)
     error_l2 = sqrt.(sum(error_array.^2 * dx0))
     error_linf = maximum(error_array)
