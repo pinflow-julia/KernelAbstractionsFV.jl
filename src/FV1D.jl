@@ -213,6 +213,7 @@ end
 
 Apply the left boundary condition.
 """
+## TODO: From my test this is slower than returning an SVector, TO BE CHECKED!
 @kernel function apply_left_bc_kernel!(cache, left::PeriodicBC, nx)
     (; u) = cache
     u[:, 0] .= @views u[:, nx]
@@ -228,6 +229,7 @@ end
 
 Apply the right boundary condition.
 """
+## TODO: From my test this is slower than returning an SVector, TO BE CHECKED!
 @kernel function apply_right_bc_kernel!(cache, right::PeriodicBC, nx)
     (; u) = cache
     u[:, nx+1] .= @views u[:, 1]
@@ -333,8 +335,9 @@ function update_rhs!(semi, backend_kernel::Union{GPU, CPU})
     (; grid, equations, solver, cache) = semi
     (; nx, dx) = grid
     (; Fn, res, backend_kernel, workgroup_size) = cache
+    nvar = Val(nvariables(equations))
     KernelAbstractions.synchronize(backend_kernel)
-    update_rhs_kernel!(backend_kernel, workgroup_size)(Fn, res, equations, solver, dx;
+    update_rhs_kernel!(backend_kernel, workgroup_size)(Fn, res, equations, solver, dx, nvar;
                                                        ndrange = nx)
     KernelAbstractions.synchronize(backend_kernel)
 
@@ -359,14 +362,13 @@ function update_rhs!(semi, backend_kernel::MyCPU)
     end # timer
 end
 
-@kernel function update_rhs_kernel!(Fn, res, equations, solver, dx)
+@kernel function update_rhs_kernel!(Fn, res, equations, solver, dx, @Const(nvar))
     i = @index(Global, Linear)
-    nvar = Val(nvariables(equations))
     fn_rr = get_node_vars_gpu(Fn, nvar, i+1)
     fn_ll = get_node_vars_gpu(Fn, nvar, i)
 
     rhs = (fn_rr - fn_ll)/ dx[i]
-    res[:, i] .= rhs
+    loop_over_variables!(res, rhs, nvar, i)
 end
 
 function compute_surface_fluxes!(semi, backend_kernel::MyCPU)
@@ -394,23 +396,30 @@ function compute_surface_fluxes!(semi, backend_kernel::Union{CPU, GPU})
     (; u, Fn, backend_kernel, workgroup_size) = cache
     @timeit cache_cpu_only.timer "compute_surface_fluxes!" begin
     #! format: noindent
-
+    
+    nvar = Val(nvariables(equations))
     KernelAbstractions.synchronize(backend_kernel)
     compute_surface_fluxes_kernel!(backend_kernel, workgroup_size)(Fn, u, equations, solver,
-                                                                   surface_flux; ndrange = nx+1)
+                                                                   surface_flux, nvar; ndrange = nx+1)
     KernelAbstractions.synchronize(backend_kernel)
 
     end # timer
 end
 
-@kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux)
+@kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux, @Const(nvar))
     i = @index(Global, Linear)
 
-    nvar = Val(nvariables(equations))
-
+    
     ul = get_node_vars_gpu(u, nvar, i-1)
     ur = get_node_vars_gpu(u, nvar, i)
 
     fn = surface_flux(ul, ur, 1, equations)
-    Fn[:, i] .= fn
+    loop_over_variables!(Fn, fn, nvar, i)
+end
+
+
+@inline function loop_over_variables!(x, y, ::Val{N}, indices...) where {N}
+        for k in 1:N
+         x[k,indices...] = y[k]
+        end
 end
