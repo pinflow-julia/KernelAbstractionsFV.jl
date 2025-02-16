@@ -38,7 +38,7 @@ end
     arr[i] = start + (stop - start) * (i - 1) / (N - 1)
 end
 
-function gpu_linrange(start, stop, N, RealT, backend)
+function my_linrange(start, stop, N, RealT, backend::Union{GPU, CPU})
     arr = KernelAbstractions.zeros(backend, RealT, N)  # GPU array
     KernelAbstractions.synchronize(backend)
 
@@ -47,12 +47,24 @@ function gpu_linrange(start, stop, N, RealT, backend)
     return arr
 end
 
+function my_linrange(start, stop, N, RealT, backend::MyCPU)
+    return LinRange{RealT}(start, stop, N)
+end
+
+KernelAbstractions.ones(backend::MyCPU, RealT, indices...) = ones(RealT, indices...)
+
+KernelAbstractions.synchronize(backend::MyCPU) = nothing
+
+KernelAbstractions.allocate(backend_kernel::MyCPU, RealT, indices...) = Array{RealT}(
+    undef, indices...)
+KernelAbstractions.zeros(backend_kernel::MyCPU, RealT, indices...) = zeros(RealT, indices...)
+
 """
     make_grid(domain::Tuple{<:Real, <:Real}, nx)
 
 Constructor for the CartesianGrid1D struct. It creates a uniform grid with nx points in the domain.
 """
-function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel::Union{GPU, CPU})
+function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     xmin, xmax = domain
     RealT = eltype(domain)
     @assert xmin < xmax
@@ -60,7 +72,7 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel::Union{GPU,
     dx0 = (xmax - xmin)/nx
     KernelAbstractions.synchronize(backend_kernel)
 
-    xc = gpu_linrange(xmin+0.5f0*dx0, xmax-0.5f0*dx0, nx, RealT, backend_kernel) # 2 dummy elements
+    xc = my_linrange(xmin+0.5f0*dx0, xmax-0.5f0*dx0, nx, RealT, backend_kernel)
     KernelAbstractions.synchronize(backend_kernel)
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
@@ -69,26 +81,8 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel::Union{GPU,
     dx = OffsetArray(dx_, OffsetArrays.Origin(0))
     KernelAbstractions.synchronize(backend_kernel)
 
-    xf = gpu_linrange(xmin, xmax, nx+1, RealT, backend_kernel)
+    xf = my_linrange(xmin, xmax, nx+1, RealT, backend_kernel)
     KernelAbstractions.synchronize(backend_kernel)
-    return CartesianGrid1D(domain, nx, xc, xf, dx, dx0)
-end
-
-function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel::MyCPU)
-    xmin, xmax = domain
-    RealT = eltype(domain)
-    @assert xmin < xmax
-    println("Making uniform grid of interval [", xmin, ", ", xmax,"]")
-    dx0 = (xmax - xmin)/nx
-
-    xc = LinRange{RealT}(xmin+0.5f0*dx0, xmax-0.5f0*dx0, nx) # 2 dummy elements
-    @printf("   Grid of with number of points = %d \n", nx)
-    @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
-    @printf("   dx                            = %e\n", dx0)
-    dx_ = dx0 .* ones(RealT, nx+2)
-    dx = OffsetArray(dx_, OffsetArrays.Origin(0))
-
-    xf = LinRange{RealT}(xmin, xmax, nx+1)
     return CartesianGrid1D(domain, nx, xc, xf, dx, dx0)
 end
 
@@ -98,7 +92,7 @@ end
 Struct containing everything about the spatial discretization.
 """
 function create_cache(equations, grid::CartesianGrid1D, initial_condition,
-                      backend_kernel::Union{GPU, CPU})
+                      backend_kernel)
     nvar = nvariables(equations)
     (; xc, nx) = grid
     RealT = eltype(xc)
@@ -117,45 +111,7 @@ function create_cache(equations, grid::CartesianGrid1D, initial_condition,
     error_array = copy(exact_array) # Uses to store pointwise in error computation
 
     # Put in initial value in u
-
-    KernelAbstractions.synchronize(backend_kernel)
-
-    set_initial_value_kernel!(backend_kernel)(
-        u, xc, equations, initial_condition, 0.0f0; ndrange = nx)
-        KernelAbstractions.synchronize(backend_kernel)
-
-    cache = (; u, u_physical, speeds, res, Fn, exact_array, error_array, backend_kernel)
-
-    return cache
-end
-
-function create_cache(equations, grid::CartesianGrid1D, initial_condition,
-                      backend_kernel::MyCPU)
-    nvar = nvariables(equations)
-    (; xc, nx) = grid
-    RealT = eltype(xc)
-    # Allocating variables
-
-    u_ = Array{RealT}(undef, nvar, nx+2)
-    u = OffsetArray(u_, OffsetArrays.Origin(1, 0))
-    u_physical = @view u[:, 1:nx]
-    res = copy(u) # dU/dt + res(U) = 0
-    Fn = copy(u) # numerical flux
-    Fn .= 0.0f0
-    # Wave speed estimate at each point for taking the maximum
-    speeds = Array{RealT}(undef, nx)
-    exact_array = Array{RealT}(undef, nvar, nx) # Used to store exact solution in error computation
-
-    error_array = copy(exact_array) # Uses to store pointwise in error computation
-
-    # Put in initial value in u
-
-    for i=1:nx
-        ic = initial_condition(xc[i], 0.0f0, equations)
-        for n=1:nvar # TODO - Use set_node_vars instead
-            u[n, i] = ic[n]
-        end
-    end
+    set_initial_value!(u, xc, equations, initial_condition, backend_kernel)
 
     cache = (; u, u_physical, speeds, res, Fn, exact_array, error_array, backend_kernel)
 
@@ -225,6 +181,24 @@ end
 
 Set the initial value of the solution.
 """
+
+function set_initial_value!(u, xc, equations, initial_condition, backend_kernel::Union{GPU, CPU})
+    KernelAbstractions.synchronize(backend_kernel)
+    set_initial_value_kernel!(backend_kernel)(
+        u, xc, equations, initial_condition, 0.0f0, ndrange = size(xc))
+    KernelAbstractions.synchronize(backend_kernel)
+end
+
+function set_initial_value!(u, xc, equations, initial_condition, backend_kernel::MyCPU)
+    nx = length(xc)
+    for i=1:nx
+        ic = initial_condition(xc[i], 0.0f0, equations)
+        for n=1:nvariables(equations)
+            u[n, i] = ic[n]
+        end
+    end
+end
+
 @kernel function set_initial_value_kernel!(u, xc, equations::AbstractEquations{1},
                                            initial_value, t)
     i = @index(Global, Linear)
