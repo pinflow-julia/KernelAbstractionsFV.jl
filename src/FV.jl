@@ -161,11 +161,13 @@ function update_solution!(semi, dt)
     (; backend_kernel) = cache
     #! format: noindent
     (; u, res) = cache
-    @. res = 0.0f0
+    @. res = 0.0f0        
     compute_residual!(semi)
     @. u.parent -= dt*res.parent # OffsetArrays work with broadcasting on GPU only with parent
-    end # timer
+    end
 end
+
+
 
 """
     compute_residual!(semi)
@@ -197,18 +199,18 @@ function solve(ode::ODE, param::Parameters; maxiters = nothing)
 
     it, t = 0, 0.0f0
     while t < Tf
-       l1, l2, linf = compute_error(semi, t, backend_kernel)
+    #  l1, l2, linf = compute_error(semi, t, backend_kernel)
        dt = compute_dt!(semi, param, backend_kernel)
        dt = adjust_time_step(ode, param, dt, t)
        update_ghost_values!(cache, cache_cpu_only, grid, boundary_conditions, backend_kernel)
        update_solution!(semi, dt)
 
-       @show l1, l2, linf
+    #   @show l1, l2, linf
        t += dt; it += 1
-       @show t, dt, it
+     #  @show t, dt, it
     end
-    l1, l2, linf = compute_error(semi, t, backend_kernel)
-
+   # l1, l2, linf = compute_error(semi, t, backend_kernel)
+    l1, l2, linf = 0.0, 0.0, 0.0
     sol = (; cache.u, semi, l1, l2, linf)
     end # timer
     print_timer(cache_cpu_only.timer)
