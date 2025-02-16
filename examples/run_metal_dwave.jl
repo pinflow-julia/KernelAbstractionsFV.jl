@@ -6,7 +6,7 @@ using Metal
 RealT = Float32
 domain = map(RealT, (0.0, 1.0))
 nx = 400
-backend_kernel = MetalBackend()
+backend_kernel = CPU()
 
 grid = make_grid(domain, nx, backend_kernel);
 equations = Euler1D(1.4f0)

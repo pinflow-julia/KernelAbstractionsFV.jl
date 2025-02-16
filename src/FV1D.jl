@@ -221,6 +221,9 @@ function compute_error(semi, t)
     error_l1 = sum(error_array * dx0)
     error_l2 = sqrt.(sum(error_array.^2 * dx0))
     error_linf = maximum(error_array)
+    # error_l1 = 0.0f0
+    # error_l2 = 0.0f0
+    # error_linf = 0.0f0
     return error_l1, error_l2, error_linf
     end # timer
 end
