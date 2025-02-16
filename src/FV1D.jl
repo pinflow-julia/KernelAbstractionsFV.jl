@@ -368,7 +368,7 @@ end
     fn_ll = get_node_vars_gpu(Fn, nvar, i)
 
     rhs = (fn_rr - fn_ll)/ dx[i]
-    set_node_vars!(res, rhs, nvar, i)
+    set_node_vars_gpu!(res, rhs, nvar, i)
 end
 
 function compute_surface_fluxes!(semi, backend_kernel::MyCPU)
@@ -414,10 +414,10 @@ end
     ur = get_node_vars_gpu(u, nvar, i)
 
     fn = surface_flux(ul, ur, 1, equations)
-    set_node_vars!(Fn, fn, nvar, i)
+    set_node_vars_gpu!(Fn, fn, nvar, i)
 end
 
-@inline function set_node_vars!(x, y, ::Val{N}, indices...) where {N}
+@inline function set_node_vars_gpu!(x, y, ::Val{N}, indices...) where {N}
     for k in 1:N
         x[k,indices...] = y[k]
     end
