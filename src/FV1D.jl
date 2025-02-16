@@ -126,10 +126,12 @@ Compute the time step based on the CFL condition.
 end
 
 function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param)
-    (; grid, equations, solver, cache) = semi
+    (; grid, equations, solver, cache, cache_cpu_only) = semi
     (; u, speeds, backend_kernel) = cache
     (; Ccfl) = param
     (; dx) = grid
+    @timeit cache_cpu_only.timer "compute_dt!" begin
+    #! format: noindent
 
     KernelAbstractions.synchronize(backend_kernel)
 
@@ -139,6 +141,7 @@ function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, para
 
     dt = Ccfl * 1.0f0 / maximum(speeds)
     return dt
+    end # timer
 end
 
 
@@ -186,7 +189,10 @@ end
 
 Update the ghost values of the solution.
 """
-function update_ghost_values!(cache, grid::CartesianGrid1D, boundary_conditions::BoundaryConditions)
+function update_ghost_values!(cache, cache_cpu_only, grid::CartesianGrid1D,
+                              boundary_conditions::BoundaryConditions)
+    @timeit cache_cpu_only.timer "update_ghost_values!" begin
+    #! format: noindent
     (; backend_kernel) = cache
     # TODO - Passing grid instead of grid.nx gives an inbits error, indicating that the `grid`
     # type has something which is not on GPU. This shouldn't happen because the grid has
@@ -196,6 +202,7 @@ function update_ghost_values!(cache, grid::CartesianGrid1D, boundary_conditions:
         cache, boundary_conditions.left, grid.nx, ndrange = 1)
     apply_right_bc_kernel!(backend_kernel, 256)(
         cache, boundary_conditions.right, grid.nx, ndrange = 1)
+    end # timer
 end
 
 """
@@ -204,9 +211,11 @@ end
 Compute the error of the solution.
 """
 function compute_error(semi, t)
-    (; grid, equations, initial_condition, cache) = semi
+    (; grid, equations, initial_condition, cache, cache_cpu_only) = semi
     (; exact_array, error_array, backend_kernel, u_physical) = cache
     (; nx, xc, dx0) = grid
+    @timeit cache_cpu_only.timer "compute_error" begin
+    #! format: noindent
 
     KernelAbstractions.synchronize(backend_kernel)
 
@@ -218,6 +227,7 @@ function compute_error(semi, t)
     error_l2 = sqrt.(sum(error_array.^2 * dx0))
     error_linf = maximum(error_array)
     return error_l1, error_l2, error_linf
+    end # timer
 end
 
 """
@@ -226,11 +236,18 @@ end
 Compute the residual of the solution.
 """ # TODO - Dispatch for 1D. The fact that it doesn't work indicates a bug in julia.
 function compute_residual!(semi)
+    (; cache_cpu_only) = semi
+    @timeit cache_cpu_only.timer "compute_residual!" begin
+    #! format: noindent
     compute_surface_fluxes!(semi)
     update_rhs!(semi)
+    end # timer
 end
 
 function update_rhs!(semi)
+    (; cache, cache_cpu_only) = semi
+    @timeit cache_cpu_only.timer "update_rhs!" begin
+    #! format: noindent
 
     (; grid, equations, solver, cache) = semi
     (; nx, dx) = grid
@@ -239,6 +256,8 @@ function update_rhs!(semi)
     KernelAbstractions.synchronize(backend_kernel)
     update_rhs_kernel!(backend_kernel,256)(Fn, res, equations, solver, dx; ndrange = nx)
     KernelAbstractions.synchronize(backend_kernel)
+
+    end # timer
 end
 
 @kernel function update_rhs_kernel!(Fn, res, equations, solver, dx)
@@ -252,14 +271,18 @@ end
 end
 
 function compute_surface_fluxes!(semi)
-
-    (; grid, equations, surface_flux, solver, cache) = semi
+    (; grid, equations, surface_flux, solver, cache, cache_cpu_only) = semi
     (; nx) = grid
     (; u, Fn, backend_kernel) = cache
+    @timeit cache_cpu_only.timer "compute_surface_fluxes!" begin
+    #! format: noindent
+
     # TODO: Is 256 an optimal workgroup size?
     KernelAbstractions.synchronize(backend_kernel)
     compute_surface_fluxes_kernel!(backend_kernel, 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
     KernelAbstractions.synchronize(backend_kernel)
+
+    end # timer
 end
 
 @kernel function compute_surface_fluxes_kernel!(Fn, u, equations, solver, surface_flux)

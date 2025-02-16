@@ -1,4 +1,5 @@
 using Trixi: AbstractEquations
+using TimerOutputs
 
 import Trixi: get_node_vars
 
@@ -69,7 +70,7 @@ Struct containing everything about the spatial discretization, and the cache
 used throughout the simulation.
 """
 struct SemiDiscretizationHyperbolic{Grid, Equations <: AbstractEquations, SurfaceFlux, IC, BC,
-                                    Solver, Cache}
+                                    Solver, Cache, CacheCPUOnly}
     grid::Grid
     equations::Equations
     surface_flux::SurfaceFlux
@@ -77,6 +78,7 @@ struct SemiDiscretizationHyperbolic{Grid, Equations <: AbstractEquations, Surfac
     boundary_conditions::BC
     solver::Solver
     cache::Cache
+    cache_cpu_only::CacheCPUOnly
 end
 
 """
@@ -90,11 +92,13 @@ function SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_con
     boundary_conditions = BoundaryConditions(PeriodicBC(), PeriodicBC()),
     backend_kernel = KernelAbstractions.CPU(),
     cache = (;))
+    timer = TimerOutput()
 
     cache = (;cache..., create_cache(equations, grid, initial_condition, backend_kernel)...)
+    cache_cpu_only = (; timer)
 
     SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition,
-                                 boundary_conditions, solver, cache)
+                                 boundary_conditions, solver, cache, cache_cpu_only)
 end
 
 """
@@ -150,11 +154,14 @@ end
 Update the solution using the explicit method.
 """
 function update_solution!(semi, dt)
-    (; cache) = semi
+    (; cache, cache_cpu_only) = semi
+    @timeit cache_cpu_only.timer "update_solution!" begin
+    #! format: noindent
     (; u, res) = cache
     res .= 0.0f0
     compute_residual!(semi)
     u.parent .-= dt*res.parent # OffsetArrays work with broadcasting on GPU only with parent
+    end # timer
 end
 
 """
@@ -164,7 +171,9 @@ Solve the conservation law.
 """
 function solve(ode::ODE, param::Parameters; maxiters = nothing)
     (; semi, tspan) = ode
-    (; grid, cache, boundary_conditions) = semi
+    (; grid, cache, cache_cpu_only, boundary_conditions) = semi
+    @timeit cache_cpu_only.timer "solve" begin
+    #! format: noindent
     Tf = tspan[2]
 
     it, t = 0, 0.0f0
@@ -172,7 +181,7 @@ function solve(ode::ODE, param::Parameters; maxiters = nothing)
        l1, l2, linf = compute_error(semi, t)
        dt = compute_dt!(semi, param)
        dt = adjust_time_step(ode, param, dt, t)
-       update_ghost_values!(cache, grid, boundary_conditions)
+       update_ghost_values!(cache, cache_cpu_only, grid, boundary_conditions)
        update_solution!(semi, dt)
 
        @show l1, l2, linf
@@ -182,6 +191,8 @@ function solve(ode::ODE, param::Parameters; maxiters = nothing)
     l1, l2, linf = compute_error(semi, t)
 
     sol = (; cache.u, semi, l1, l2, linf)
+    end # timer
+    print_timer(cache_cpu_only.timer)
     return sol
 end
 
