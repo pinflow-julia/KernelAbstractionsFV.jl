@@ -94,7 +94,9 @@ function SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_con
     cache = (;))
     timer = TimerOutput()
 
-    cache = (;cache..., create_cache(equations, grid, initial_condition, backend_kernel)...)
+    workgroup_size = 256
+    cache = (;cache..., create_cache(equations, grid, initial_condition, backend_kernel)...,
+              workgroup_size)
     cache_cpu_only = (; timer)
 
     SemiDiscretizationHyperbolic(grid, equations, surface_flux, initial_condition,

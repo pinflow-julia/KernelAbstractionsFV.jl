@@ -42,7 +42,7 @@ function gpu_linrange(start, stop, N, RealT, backend)
     arr = KernelAbstractions.zeros(backend, RealT, N)  # GPU array
     KernelAbstractions.synchronize(backend)
 
-    linrange_kernel(backend, 256)(start, stop, arr, ndrange=N)
+    linrange_kernel(backend)(start, stop, arr, ndrange=N)
     KernelAbstractions.synchronize(backend)
     return arr
 end
@@ -127,7 +127,7 @@ end
 
 function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param)
     (; grid, equations, solver, cache, cache_cpu_only) = semi
-    (; u, speeds, backend_kernel) = cache
+    (; u, speeds, backend_kernel, workgroup_size) = cache
     (; Ccfl) = param
     (; dx) = grid
     @timeit cache_cpu_only.timer "compute_dt!" begin
@@ -135,7 +135,7 @@ function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, para
 
     KernelAbstractions.synchronize(backend_kernel)
 
-    compute_max_speed_kernel!(backend_kernel, 256)(
+    compute_max_speed_kernel!(backend_kernel, workgroup_size)(
         speeds, u, equations, grid.dx; ndrange = grid.nx)
     KernelAbstractions.synchronize(backend_kernel)
 
@@ -146,22 +146,17 @@ end
 
 
 """
-    set_initial_value!(grid, equations, u, initial_value)
+    set_initial_value_kernel!(grid, equations, u, initial_value)
 
 Set the initial value of the solution.
 """
-function set_initial_value!(cache, grid, equations::AbstractEquations{1}, initial_value)
-    (; u) = cache
-    (; nx, xc) = grid
-    for i=1:nx
-        u[:,i] .= initial_value(xc[i], 0.0f0, equations)
-    end
-end
-
 @kernel function set_initial_value_kernel!(u, xc, equations::AbstractEquations{1},
                                            initial_value, t)
     i = @index(Global, Linear)
-    u[:, i] .= initial_value(xc[i], t, equations)
+    ic = initial_value(xc[i], t, equations)
+    for n=1:nvariables(equations)
+        @inbounds u[n, i] = ic[n]
+    end
 end
 
 """
@@ -193,14 +188,14 @@ function update_ghost_values!(cache, cache_cpu_only, grid::CartesianGrid1D,
                               boundary_conditions::BoundaryConditions)
     @timeit cache_cpu_only.timer "update_ghost_values!" begin
     #! format: noindent
-    (; backend_kernel) = cache
+    (; backend_kernel, workgroup_size) = cache
     # TODO - Passing grid instead of grid.nx gives an inbits error, indicating that the `grid`
     # type has something which is not on GPU. This shouldn't happen because the grid has
     # nothing that the cache doesn't have.
     # https://github.com/JuliaGPU/CUDA.jl/issues/372
-    apply_left_bc_kernel!(backend_kernel, 256)(
+    apply_left_bc_kernel!(backend_kernel, workgroup_size)(
         cache, boundary_conditions.left, grid.nx, ndrange = 1)
-    apply_right_bc_kernel!(backend_kernel, 256)(
+    apply_right_bc_kernel!(backend_kernel, workgroup_size)(
         cache, boundary_conditions.right, grid.nx, ndrange = 1)
     end # timer
 end
@@ -212,17 +207,17 @@ Compute the error of the solution.
 """
 function compute_error(semi, t)
     (; grid, equations, initial_condition, cache, cache_cpu_only) = semi
-    (; exact_array, error_array, backend_kernel, u_physical) = cache
+    (; exact_array, error_array, backend_kernel, u_physical, workgroup_size) = cache
     (; nx, xc, dx0) = grid
     @timeit cache_cpu_only.timer "compute_error" begin
     #! format: noindent
 
     KernelAbstractions.synchronize(backend_kernel)
 
-    set_initial_value_kernel!(backend_kernel, 256)(
-    exact_array, xc, equations, initial_condition, t, ndrange = nx)
+    set_initial_value_kernel!(backend_kernel, workgroup_size)(
+        exact_array, xc, equations, initial_condition, t, ndrange = nx)
     KernelAbstractions.synchronize(backend_kernel)
-    error_array .= abs.(u_physical .- exact_array) # TODO - Does this have auto-sync?
+    @. error_array = abs.(u_physical .- exact_array) # TODO - Does this have auto-sync?
     error_l1 = sum(error_array * dx0)
     error_l2 = sqrt.(sum(error_array.^2 * dx0))
     error_linf = maximum(error_array)
@@ -251,10 +246,11 @@ function update_rhs!(semi)
 
     (; grid, equations, solver, cache) = semi
     (; nx, dx) = grid
-    (; Fn, res, backend_kernel) = cache
+    (; Fn, res, backend_kernel, workgroup_size) = cache
     # TODO: Is 256 an optimal workgroup size?
     KernelAbstractions.synchronize(backend_kernel)
-    update_rhs_kernel!(backend_kernel,256)(Fn, res, equations, solver, dx; ndrange = nx)
+    update_rhs_kernel!(backend_kernel, workgroup_size)(Fn, res, equations, solver, dx;
+                                                       ndrange = nx)
     KernelAbstractions.synchronize(backend_kernel)
 
     end # timer
@@ -273,13 +269,14 @@ end
 function compute_surface_fluxes!(semi)
     (; grid, equations, surface_flux, solver, cache, cache_cpu_only) = semi
     (; nx) = grid
-    (; u, Fn, backend_kernel) = cache
+    (; u, Fn, backend_kernel, workgroup_size) = cache
     @timeit cache_cpu_only.timer "compute_surface_fluxes!" begin
     #! format: noindent
 
     # TODO: Is 256 an optimal workgroup size?
     KernelAbstractions.synchronize(backend_kernel)
-    compute_surface_fluxes_kernel!(backend_kernel, 256)(Fn, u, equations, solver, surface_flux; ndrange = nx+1)
+    compute_surface_fluxes_kernel!(backend_kernel, workgroup_size)(Fn, u, equations, solver,
+                                                                   surface_flux; ndrange = nx+1)
     KernelAbstractions.synchronize(backend_kernel)
 
     end # timer
