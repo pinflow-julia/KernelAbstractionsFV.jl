@@ -162,7 +162,7 @@ function update_solution!(semi, dt)
     #! format: noindent
     (; u, res) = cache
     @. res = 0.0f0
-    compute_residual!(semi, backend_kernel)
+    compute_residual!(semi)
     @. u.parent -= dt*res.parent # OffsetArrays work with broadcasting on GPU only with parent
     end # timer
 end
@@ -172,8 +172,9 @@ end
 
 Compute the residual of the solution.
 """ # TODO - Dispatch for 1D. The fact that it doesn't work indicates a bug in julia.
-function compute_residual!(semi, backend_kernel)
+function compute_residual!(semi)
     (; cache_cpu_only) = semi
+    (; backend_kernel) = semi.cache
     @timeit cache_cpu_only.timer "compute_residual!" begin
     #! format: noindent
     compute_surface_fluxes!(semi, backend_kernel)
