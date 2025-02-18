@@ -12,7 +12,7 @@ include("EqEuler1D.jl")
 
 const examples_dir = joinpath(dirname(pathof(KernelAbstractionsFV)), "..", "examples")
 
-include("FV.jl")
+include("fv.jl")
 
 export make_grid, Euler1D, prim2cons, SemiDiscretizationHyperbolic, solve, ODE, Parameters,
        flux_rusanov, MyCPU
