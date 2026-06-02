@@ -70,19 +70,15 @@ function make_grid(domain::Tuple{<:Real, <:Real}, nx, backend_kernel)
     @assert xmin < xmax
     println("Making uniform grid of interval [", xmin, ", ", xmax,"]")
     dx0 = (xmax - xmin)/nx
-    KernelAbstractions.synchronize(backend_kernel)
 
     xc = my_linrange(xmin+0.5f0*dx0, xmax-0.5f0*dx0, nx, RealT, backend_kernel)
-    KernelAbstractions.synchronize(backend_kernel)
     @printf("   Grid of with number of points = %d \n", nx)
     @printf("   xmin,xmax                     = %e, %e\n", xmin, xmax)
     @printf("   dx                            = %e\n", dx0)
     dx_ = dx0 .* KernelAbstractions.ones(backend_kernel, RealT, nx+2)
     dx = OffsetArray(dx_, OffsetArrays.Origin(0))
-    KernelAbstractions.synchronize(backend_kernel)
 
     xf = my_linrange(xmin, xmax, nx+1, RealT, backend_kernel)
-    KernelAbstractions.synchronize(backend_kernel)
     return CartesianGrid1D(domain, nx, xc, xf, dx, dx0)
 end
 
@@ -124,16 +120,17 @@ end
 Compute the time step based on the CFL condition.
 """
 @kernel function compute_max_speed_kernel!(speeds, u,
-    equations::Union{Euler1D, CompressibleEulerEquations1D}, dx)
+    equations::Union{Euler1D, CompressibleEulerEquations1D}, dx0,
+    @Const(nvar))
     i = @index(Global, Linear)
-    nvar = Val(nvariables(equations))
     u_node = get_node_vars_gpu(u, nvar, i)
     local_speed = sum(max_abs_speeds(u_node, equations)) # Since Trixi equations return it
                                                          # as a tuple of one element
-    speeds[i] = local_speed / dx[i]
+    speeds[i] = local_speed / dx0
 end
 
 function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param,
+                     time_stepping::CFLTimeStepping,
                      backend_kernel::Union{GPU, CPU})
     (; grid, equations, solver, cache, cache_cpu_only) = semi
     (; u, speeds, backend_kernel, workgroup_size) = cache
@@ -142,11 +139,9 @@ function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, para
     @timeit cache_cpu_only.timer "compute_dt!" begin
     #! format: noindent
 
-    KernelAbstractions.synchronize(backend_kernel)
-
+    nvar = Val(nvariables(equations))
     compute_max_speed_kernel!(backend_kernel, workgroup_size)(
-        speeds, u, equations, grid.dx; ndrange = grid.nx)
-    KernelAbstractions.synchronize(backend_kernel)
+        speeds, u, equations, grid.dx0, nvar; ndrange = grid.nx)
 
     dt = Ccfl * 1.0f0 / maximum(speeds)
     return dt
@@ -154,6 +149,7 @@ function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, para
 end
 
 function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param,
+                     time_stepping::CFLTimeStepping,
                      backend_kernel::MyCPU)
     (; grid, equations, solver, cache, cache_cpu_only) = semi
     (; u, speeds, backend_kernel, workgroup_size) = cache
@@ -175,6 +171,16 @@ function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, para
     end # timer
 end
 
+function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param,
+                     time_stepping::FixedTimeStepping,
+                     backend_kernel)
+    (; cache_cpu_only) = semi
+    @timeit cache_cpu_only.timer "compute_dt!" begin
+    #! format: noindent
+    return time_stepping.dt
+    end # timer
+end
+
 
 """
     set_initial_value_kernel!(grid, equations, u, initial_value)
@@ -183,10 +189,8 @@ Set the initial value of the solution.
 """
 
 function set_initial_value!(u, xc, equations, initial_condition, backend_kernel::Union{GPU, CPU})
-    KernelAbstractions.synchronize(backend_kernel)
     set_initial_value_kernel!(backend_kernel)(
         u, xc, equations, initial_condition, 0.0f0, ndrange = size(xc))
-    KernelAbstractions.synchronize(backend_kernel)
 end
 
 function set_initial_value!(u, xc, equations, initial_condition, backend_kernel::MyCPU)
@@ -285,11 +289,8 @@ function compute_error(semi, t, backend_kernel::Union{GPU, CPU})
     @timeit cache_cpu_only.timer "compute_error" begin
     #! format: noindent
 
-    KernelAbstractions.synchronize(backend_kernel)
-
     set_initial_value_kernel!(backend_kernel, workgroup_size)(
         exact_array, xc, equations, initial_condition, t, ndrange = nx)
-    KernelAbstractions.synchronize(backend_kernel)
     @. error_array = abs(u_physical - exact_array) # TODO - Does this have auto-sync?
     error_l1 = sum(error_array * dx0)
     error_l2 = sqrt.(sum(error_array.^2 * dx0))
@@ -336,10 +337,8 @@ function update_rhs!(semi, backend_kernel::Union{GPU, CPU})
     (; nx, dx) = grid
     (; Fn, res, backend_kernel, workgroup_size) = cache
     nvar = Val(nvariables(equations))
-    KernelAbstractions.synchronize(backend_kernel)
     update_rhs_kernel!(backend_kernel, workgroup_size)(Fn, res, equations, solver, dx, nvar;
                                                        ndrange = nx)
-    KernelAbstractions.synchronize(backend_kernel)
 
     end # timer
 end
@@ -398,10 +397,8 @@ function compute_surface_fluxes!(semi, backend_kernel::Union{CPU, GPU})
     #! format: noindent
 
     nvar = Val(nvariables(equations))
-    KernelAbstractions.synchronize(backend_kernel)
     compute_surface_fluxes_kernel!(backend_kernel, workgroup_size)(Fn, u, equations, solver,
                                                                    surface_flux, nvar; ndrange = nx+1)
-    KernelAbstractions.synchronize(backend_kernel)
 
     end # timer
 end

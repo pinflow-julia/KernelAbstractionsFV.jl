@@ -17,4 +17,6 @@ include("fv.jl")
 export make_grid, Euler1D, prim2cons, SemiDiscretizationHyperbolic, solve, ODE, Parameters,
        flux_rusanov, MyCPU
 
+export CFLTimeStepping, FixedTimeStepping
+
 end # module KernelAbstractionsFV
