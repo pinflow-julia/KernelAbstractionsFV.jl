@@ -218,14 +218,39 @@ end
 Apply the left boundary condition.
 """
 ## TODO: From my test this is slower than returning an SVector, TO BE CHECKED!
-@kernel function apply_left_bc_kernel!(cache, left::PeriodicBC, nx)
+@kernel function apply_left_bc_kernel!(cache, xf, left::PeriodicBC, nx)
     (; u) = cache
     u[:, 0] .= @views u[:, nx]
 end
 
-function apply_left_bc!(cache, left::PeriodicBC, nx)
+function apply_left_bc!(cache, xf, left::PeriodicBC, nx)
     (; u) = cache
     u[:, 0] .= @views u[:, nx]
+end
+
+@kernel function apply_left_bc_kernel!(cache, xf, left::InflowBC, nx)
+    (; u) = cache
+    x = xf[1]
+    ic = left.boundary_value(x, 0.0f0) # TODO - Add time!
+    u[:, 0] .= ic
+end
+
+function apply_left_bc!(cache, xf, left::InflowBC, nx)
+    (; u) = cache
+    (; boundary_value) = left
+    x_face = xf[1]
+    ic = boundary_value(x_face, 0.0f0) # TODO - Add time!
+    u[:, 0] .= ic
+end
+
+@kernel function apply_left_bc_kernel!(cache, xf, left::OutflowBC, nx)
+    (; u) = cache
+    u[:, 0] .= u[:, 1]
+end
+
+function apply_left_bc!(cache, xf, left::OutflowBC, nx)
+    (; u) = cache
+    u[:, 0] .= u[:, 1]
 end
 
 """
@@ -234,14 +259,39 @@ end
 Apply the right boundary condition.
 """
 ## TODO: From my test this is slower than returning an SVector, TO BE CHECKED!
-@kernel function apply_right_bc_kernel!(cache, right::PeriodicBC, nx)
+@kernel function apply_right_bc_kernel!(cache, xf, right::PeriodicBC, nx)
     (; u) = cache
     u[:, nx+1] .= @views u[:, 1]
 end
 
-function apply_right_bc!(cache, right::PeriodicBC, nx)
+function apply_right_bc!(cache, xf, right::PeriodicBC, nx)
     (; u) = cache
     u[:, nx+1] .= @views u[:, 1]
+end
+
+@kernel function apply_right_bc_kernel!(cache, xf, right::InflowBC, nx)
+    (; u) = cache
+    x = xf[nx+1]
+    ic = right.boundary_value(x, 0.0f0) # TODO - Add time!
+    u[:, nx+1] .= ic
+end
+
+function apply_right_bc!(cache, xf, right::InflowBC, nx)
+    (; u) = cache
+    (; boundary_value) = right
+    x_face = xf[nx+1]
+    ic = boundary_value(x_face, 0.0f0) # TODO - Add time!
+    u[:, nx+1] .= ic
+end
+
+function apply_right_bc_kernel!(cache, xf, right::OutflowBC, nx)
+    (; u) = cache
+    u[:, nx+1] .= u[:, nx]
+end
+
+function apply_right_bc!(cache, xf, right::OutflowBC, nx)
+    (; u) = cache
+    u[:, nx+1] .= u[:, nx]
 end
 
 """
@@ -260,9 +310,9 @@ function update_ghost_values!(cache, cache_cpu_only, grid::CartesianGrid1D,
     # nothing that the cache doesn't have.
     # https://github.com/JuliaGPU/CUDA.jl/issues/372
     apply_left_bc_kernel!(backend_kernel, workgroup_size)(
-        cache, boundary_conditions.left, grid.nx, ndrange = 1)
+        cache, grid.xf, boundary_conditions.left, grid.nx, ndrange = 1)
     apply_right_bc_kernel!(backend_kernel, workgroup_size)(
-        cache, boundary_conditions.right, grid.nx, ndrange = 1)
+        cache, grid.xf, boundary_conditions.right, grid.nx, ndrange = 1)
     end # timer
 end
 
@@ -272,8 +322,8 @@ function update_ghost_values!(cache, cache_cpu_only, grid::CartesianGrid1D,
     @timeit cache_cpu_only.timer "update_ghost_values!" begin
     #! format: noindent
 
-    apply_left_bc!(cache, boundary_conditions.left, grid.nx)
-    apply_right_bc!(cache, boundary_conditions.right, grid.nx)
+    apply_left_bc!(cache, grid.xf, boundary_conditions.left, grid.nx)
+    apply_right_bc!(cache, grid.xf, boundary_conditions.right, grid.nx)
     end # timer
 end
 
