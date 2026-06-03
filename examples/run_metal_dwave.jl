@@ -5,7 +5,7 @@ using Metal
 
 RealT = Float32
 domain = map(RealT, (0.0, 1.0))
-nx = 10000
+nx = 400
 backend_kernel = MetalBackend()
 
 grid = make_grid(domain, nx, backend_kernel);

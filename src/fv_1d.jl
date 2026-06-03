@@ -120,13 +120,13 @@ end
 Compute the time step based on the CFL condition.
 """
 @kernel function compute_max_speed_kernel!(speeds, u,
-    equations::Union{Euler1D, CompressibleEulerEquations1D}, dx0,
+    equations::Union{Euler1D, CompressibleEulerEquations1D}, dx,
     @Const(nvar))
     i = @index(Global, Linear)
     u_node = get_node_vars_gpu(u, nvar, i)
     local_speed = sum(max_abs_speeds(u_node, equations)) # Since Trixi equations return it
                                                          # as a tuple of one element
-    speeds[i] = local_speed / dx0
+    speeds[i] = local_speed / dx[i]
 end
 
 function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, param,
@@ -141,7 +141,7 @@ function compute_dt!(semi::SemiDiscretizationHyperbolic{<:CartesianGrid1D}, para
 
     nvar = Val(nvariables(equations))
     compute_max_speed_kernel!(backend_kernel, workgroup_size)(
-        speeds, u, equations, grid.dx0, nvar; ndrange = grid.nx)
+        speeds, u, equations, grid.dx, nvar; ndrange = grid.nx)
 
     dt = Ccfl * 1.0f0 / maximum(speeds)
     return dt
