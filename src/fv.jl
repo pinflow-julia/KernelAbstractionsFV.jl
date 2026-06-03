@@ -113,6 +113,18 @@ struct ODE{Semi <: SemiDiscretizationHyperbolic, RealT <: Real}
     tspan::Tuple{RealT, RealT}
 end
 
+""" 
+    CFL time stepping.
+"""
+struct CFLTimeStepping end
+
+"""
+    Fixed time stepping.
+"""
+struct FixedTimeStepping{RealT <: Real}
+    dt::RealT
+end
+
 """
     Parameters
 
@@ -129,6 +141,8 @@ end
 Adjusts the time step to reach the final time exactly and to reach the next solution saving time.
 """
 function adjust_time_step(ode, param, dt, t)
+  (; timer) = ode.semi.cache_cpu_only
+    @timeit timer "adjust_time_step" begin
    # Adjust to reach final time exactly
    final_time = ode.tspan[2]
    (; save_time_interval) = param
@@ -148,6 +162,7 @@ function adjust_time_step(ode, param, dt, t)
       end
    end
    return dt
+    end # timer
 end
 
 """
@@ -189,7 +204,7 @@ end
 
 Solve the conservation law.
 """
-function solve(ode::ODE, param::Parameters; maxiters = nothing)
+function solve(ode::ODE, param::Parameters; maxiters = nothing, compute_error_interval = 0, time_stepping = CFLTimeStepping())
     (; semi, tspan) = ode
     (; grid, cache, cache_cpu_only, boundary_conditions) = semi
     (; backend_kernel) = cache
@@ -199,15 +214,17 @@ function solve(ode::ODE, param::Parameters; maxiters = nothing)
 
     it, t = 0, 0.0f0
     while t < Tf
-       l1, l2, linf = compute_error(semi, t, backend_kernel)
-       dt = compute_dt!(semi, param, backend_kernel)
+       if compute_error_interval > 0
+        if it % compute_error_interval == 0
+            l1, l2, linf = compute_error(semi, t, backend_kernel)
+            @show t, l1, l2, linf
+        end
+       end
+       dt = compute_dt!(semi, param, time_stepping, backend_kernel)
        dt = adjust_time_step(ode, param, dt, t)
        update_ghost_values!(cache, cache_cpu_only, grid, boundary_conditions, backend_kernel)
        update_solution!(semi, dt)
-
-       @show l1, l2, linf
        t += dt; it += 1
-       @show t, dt, it
     end
     l1, l2, linf = compute_error(semi, t, backend_kernel)
     sol = (; cache.u, semi, l1, l2, linf)

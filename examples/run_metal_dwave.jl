@@ -26,8 +26,9 @@ tspan = map(RealT, (0.0, 0.1))
 ode = ODE(semi, tspan)
 Ccfl = map(RealT, 0.9)
 save_time_interval = map(RealT, 0.0)
+time_stepping = FixedTimeStepping(map(RealT, 1e-5))
 param = Parameters(Ccfl, save_time_interval)
 
-sol = solve(ode, param);
+sol = solve(ode, param, time_stepping = time_stepping);
 
 @show sol.l1, sol.l2
